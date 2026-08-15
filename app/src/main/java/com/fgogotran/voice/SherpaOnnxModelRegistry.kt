@@ -257,7 +257,13 @@ class SherpaOnnxModelRegistry @Inject constructor(
             } catch (t: Throwable) {
                 runCatching { target.deleteRecursively() }
                 FgoLogger.warn(tag, "内置模型安装失败 $modelId: ${t.message}")
-                diagnosticEventStore.recordError("内置 TTS 模型安装失败：$modelId", t)
+                diagnosticEventStore.record(
+                    level = DiagnosticEventStore.LEVEL_ERROR,
+                    category = DiagnosticEventStore.CATEGORY_APP_ERROR,
+                    eventId = "sherpa_builtin_install_failed",
+                    title = "内置 TTS 模型安装失败",
+                    message = "model=$modelId: ${t.stackTraceToString()}"
+                )
             }
         }
     }

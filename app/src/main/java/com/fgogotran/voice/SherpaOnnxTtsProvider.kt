@@ -253,14 +253,12 @@ class SherpaOnnxTtsProvider @Inject constructor(
         activeSampleRate = installed.manifest.sampleRate
     }
 
-    private fun resolveSpeed(request: VoiceSynthesisRequest): Float {
+    private suspend fun resolveSpeed(request: VoiceSynthesisRequest): Float {
         val pct = request.aiVoiceSpeedPercent.takeIf { it in 50..200 }
-            ?: settingsRepository.aiVoiceSpeedPercent.valueOr(115)
+            ?: settingsRepository.aiVoiceSpeedPercent.first().coerceIn(50, 200)
         // 115% -> 1.15x speed
         return (pct / 100f).coerceIn(0.5f, 2.0f)
     }
-
-    private fun Int?.valueOr(def: Int) = this ?: def
 
     /** 将 float [-1,1] 音频以 16-bit PCM 写入 WAV */
     private fun writeWav(file: File, samples: FloatArray, sampleRate: Int) {
