@@ -59,8 +59,8 @@ android {
         val envKeyPass = System.getenv("ANDROID_SIGNING_KEY_PASSWORD").orEmpty()
 
         create("releaseFromEnv") {
-            isV1SigningEnabled = true
-            isV2SigningEnabled = true
+            enableV1Signing = true
+            enableV2Signing = true
             storeFile = if (envStoreFile.isNotBlank()) file(envStoreFile) else null
             storePassword = envStorePass.ifBlank { "android" }
             keyAlias = envKeyAlias.ifBlank { "androiddebugkey" }

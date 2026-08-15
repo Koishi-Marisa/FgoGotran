@@ -54,7 +54,7 @@ jobs:
           set -e
           if [ -n "$KEYSTORE_B64" ]; then
             mkdir -p "$RUNNER_TEMP"
-            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
             {
               echo "ANDROID_SIGNING_STORE_FILE=$RUNNER_TEMP/release.keystore"
               echo "ANDROID_SIGNING_STORE_PASSWORD=${{ secrets.RELEASE_KEYSTORE_PASSWORD || 'android' }}"
@@ -63,7 +63,7 @@ jobs:
             } >> "$GITHUB_ENV"
             echo "Wrote release keystore: $RUNNER_TEMP/release.keystore ($(wc -c < "$RUNNER_TEMP/release.keystore") bytes)"
           else
-            echo "No keystore secret provided; will fall back to debug signing (release APK will still build)."
+            echo "::warning::No RELEASE_KEYSTORE_BASE64 secret provided; release APK will be signed with the debug certificate. Install may be blocked on some devices."
           fi
 
       - name: Build Debug + Release APKs
@@ -81,6 +81,17 @@ jobs:
           ls -la app/build/outputs/apk/debug/ app/build/outputs/apk/release/ || true
           [ -n "$DEBUG_APK" ]
           [ -n "$RELEASE_APK" ]
+
+      - name: Verify APK signatures
+        run: |
+          set -e
+          BUILD_TOOLS_DIR=$(ls -d "$ANDROID_SDK_ROOT/build-tools/"* | sort -V | tail -n1)
+          echo "Using build-tools: $BUILD_TOOLS_DIR"
+          for apk in "${{ steps.outputs.outputs.debug_apk }}" "${{ steps.outputs.outputs.release_apk }}"; do
+            echo "Verifying $apk"
+            "$BUILD_TOOLS_DIR/apksigner" verify -v "$apk"
+            echo "---"
+          done
 
       - name: Compute SHA256
         id: sha
