@@ -88,6 +88,23 @@ class SettingsRepository @Inject constructor(
         val KEY_ANALYTICS_FIRST_INSTALL_SENT = booleanPreferencesKey("analytics_first_install_sent")
         val KEY_ANALYTICS_DAILY_ACTIVE_DATE = stringPreferencesKey("analytics_daily_active_date")
         val KEY_QWEN_SITE = stringPreferencesKey("qwen_site")
+        val KEY_TTS_PROVIDER = stringPreferencesKey("tts_provider")
+        val KEY_SHERPA_SELECTED_MODEL = stringPreferencesKey("sherpa_selected_model")
+        val KEY_SHERPA_SELECTED_SPEAKER = intPreferencesKey("sherpa_selected_speaker")
+
+        // ---- TTS Provider IDs ----
+        const val TTS_PROVIDER_AZURE = "azure"
+        const val TTS_PROVIDER_SHERPA_ONNX = "sherpa_onnx"
+        const val DEFAULT_TTS_PROVIDER = TTS_PROVIDER_AZURE
+        private val SUPPORTED_TTS_PROVIDERS = setOf(TTS_PROVIDER_AZURE, TTS_PROVIDER_SHERPA_ONNX)
+
+        fun normalizeTtsProvider(provider: String): String =
+            provider.takeIf { it in SUPPORTED_TTS_PROVIDERS } ?: DEFAULT_TTS_PROVIDER
+
+        fun ttsProviderDisplayName(provider: String): String = when (normalizeTtsProvider(provider)) {
+            TTS_PROVIDER_SHERPA_ONNX -> "Sherpa-ONNX 本地离线合成"
+            else -> "Azure Neural TTS (云端)"
+        }
 
         const val DEFAULT_FLOATING_BUTTON_X = 8
         const val DEFAULT_FLOATING_BUTTON_Y = 300
@@ -447,6 +464,23 @@ class SettingsRepository @Inject constructor(
         prefs[KEY_AI_VOICE_CHOICE_TEXT_ENABLED] ?: DEFAULT_AI_VOICE_CHOICE_TEXT_ENABLED
     }
 
+    /** Which TTS provider to use for AI voice synthesis. */
+    val ttsProvider: Flow<String> = context.dataStore.data.map { prefs ->
+        normalizeTtsProvider(prefs[KEY_TTS_PROVIDER] ?: DEFAULT_TTS_PROVIDER)
+    }
+
+    suspend fun getTtsProvider(): String = ttsProvider.first()
+
+    /** Currently selected Sherpa-ONNX model id (empty means auto-pick). */
+    val sherpaSelectedModel: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_SHERPA_SELECTED_MODEL].orEmpty()
+    }
+
+    /** Currently selected Sherpa-ONNX speaker id within the selected model. */
+    val sherpaSelectedSpeaker: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[KEY_SHERPA_SELECTED_SPEAKER] ?: 0
+    }
+
     /** Master voice used when reading choice text. */
     val aiVoiceMasterVoice: Flow<String> = context.dataStore.data.map { prefs ->
         normalizeAiVoiceMasterVoice(prefs[KEY_AI_VOICE_MASTER_VOICE] ?: DEFAULT_AI_VOICE_MASTER_VOICE)
@@ -780,6 +814,23 @@ class SettingsRepository @Inject constructor(
     suspend fun setAiVoiceChoiceTextEnabled(enabled: Boolean) {
         context.dataStore.edit { it[KEY_AI_VOICE_CHOICE_TEXT_ENABLED] = enabled }
         FgoLogger.debug(tag, "Setting updated: ai_voice_choice_text_enabled=$enabled")
+    }
+
+    suspend fun setTtsProvider(provider: String) {
+        val normalized = normalizeTtsProvider(provider)
+        context.dataStore.edit { it[KEY_TTS_PROVIDER] = normalized }
+        FgoLogger.debug(tag, "Setting updated: tts_provider=$normalized")
+    }
+
+    suspend fun setSherpaSelectedModel(modelId: String) {
+        context.dataStore.edit { it[KEY_SHERPA_SELECTED_MODEL] = modelId.trim() }
+        FgoLogger.debug(tag, "Setting updated: sherpa_selected_model=${modelId.trim()}")
+    }
+
+    suspend fun setSherpaSelectedSpeaker(speakerId: Int) {
+        val safe = speakerId.coerceAtLeast(0)
+        context.dataStore.edit { it[KEY_SHERPA_SELECTED_SPEAKER] = safe }
+        FgoLogger.debug(tag, "Setting updated: sherpa_selected_speaker=$safe")
     }
 
     suspend fun setAiVoiceMasterVoice(masterVoice: String) {

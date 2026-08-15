@@ -83,6 +83,19 @@ dependencies {
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.27.0")
     implementation("org.locationtech.jts:jts-core:1.19.0")
 
+    // ===== Sherpa-ONNX 本地离线 TTS（可选启用） =====
+    // 项目已通过 TtsProvider 抽象层支持 Sherpa-ONNX。
+    // 启用方法（任选其一）：
+    //   1) 从 mavenCentral 拉取（需与 onnxruntime-android 版本对齐）：
+    //      implementation("io.github.k2-fsa:sherpa-onnx-android:1.14.0")
+    //   2) 从 https://github.com/k2-fsa/sherpa-onnx/releases 下载官方 AAR
+    //      放入 app/libs/sherpa-onnx-android.aar，再：
+    //      implementation(files("libs/sherpa-onnx-android.aar"))
+    // 启用后即可使用 Piper / VITS / Kokoro / Matcha 等 100+ 社区模型本地合成。
+
+    // Apache Commons Compress：SherpaOnnxModelRegistry 解压 tar.bz2 模型包
+    implementation("org.apache.commons:commons-compress:1.27.1")
+
     // Ktor HTTP client
     implementation("io.ktor:ktor-client-android:2.3.12")
     implementation("io.ktor:ktor-client-content-negotiation:2.3.12")

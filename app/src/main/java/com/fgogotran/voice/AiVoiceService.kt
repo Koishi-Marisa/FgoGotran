@@ -40,6 +40,8 @@ class AiVoiceService @Inject constructor(
     private val tempVoiceProfileBuilder: TempVoiceProfileBuilder,
     private val diagnosticEventStore: DiagnosticEventStore,
     private val azureTtsClient: AzureTtsClient,
+    private val azureTtsProvider: AzureTtsProvider,
+    private val sherpaOnnxTtsProvider: SherpaOnnxTtsProvider,
     private val audioCache: VoiceAudioCache,
     private val playbackEngine: VoicePlaybackEngine
 ) {
@@ -52,6 +54,14 @@ class AiVoiceService @Inject constructor(
     private var latestVoiceRequestId = 0L
     private var lastRequestedCacheMaterial: String? = null
     private var lastRequestedLineKey: String? = null
+
+    /** 返回当前用户选择的 TTS Provider。默认 Azure，用户可在「语音设置」里切换到本地合成。 */
+    private suspend fun currentProvider(): TtsProvider {
+        return when (settingsRepository.getTtsProvider()) {
+            SettingsRepository.TTS_PROVIDER_SHERPA_ONNX -> sherpaOnnxTtsProvider
+            else -> azureTtsProvider
+        }
+    }
 
     private data class PreparedVoiceLine(
         val speaker: String,
@@ -77,19 +87,24 @@ class AiVoiceService @Inject constructor(
         )
             ?.takeIf { TextNormalizer.hasTranslatableContent(it) }
             ?: return
-        val speechKey = settingsRepository.azureSpeechKey.first().trim()
-        if (speechKey.isBlank()) {
-            FgoLogger.warn(tag, "AI voice enabled but Azure Speech key is blank")
-            diagnosticEventStore.record(
-                level = DiagnosticEventStore.LEVEL_ERROR,
-                category = DiagnosticEventStore.CATEGORY_APP_ERROR,
-                eventId = "azure_key_missing",
-                title = "Azure Speech Key 未设置",
-                message = "AI语音已开启，但 Azure Speech Key 为空",
-                speaker = speaker,
-                textPreview = dialogue.previewText()
-            )
-            return
+
+        val provider = currentProvider()
+        if (provider.requiresCredentials) {
+            // 云端 provider 需要 key；本地合成不需要
+            val speechKey = settingsRepository.azureSpeechKey.first().trim()
+            if (speechKey.isBlank()) {
+                FgoLogger.warn(tag, "AI voice provider=${provider.providerId} 但凭证为空")
+                diagnosticEventStore.record(
+                    level = DiagnosticEventStore.LEVEL_ERROR,
+                    category = DiagnosticEventStore.CATEGORY_APP_ERROR,
+                    eventId = "tts_provider_credentials_missing",
+                    title = "${provider.displayName} 凭证未设置",
+                    message = "AI语音已开启，但当前 provider 所需凭证为空",
+                    speaker = speaker,
+                    textPreview = dialogue.previewText()
+                )
+                return
+            }
         }
 
         val gameServer = settingsRepository.getGameServer()
@@ -120,7 +135,8 @@ class AiVoiceService @Inject constructor(
         }
 
         val voiceVolumePercent = settingsRepository.aiVoiceVolumePercent.first()
-        val cacheMaterial = preparedLines.joinToString("||") { it.cacheMaterial }
+        val cacheMaterial = "${provider.providerId}|" +
+            preparedLines.joinToString("||") { it.cacheMaterial }
         val requestId = reserveVoiceRequest(
             lineKey = lineKey,
             cacheMaterial = cacheMaterial,
@@ -133,8 +149,8 @@ class AiVoiceService @Inject constructor(
                     FgoLogger.debug(tag, "AI voice stale skipped before synthesis: speaker=$speaker")
                     return@runCatching
                 }
-                val audioFiles = synthesizeVoiceLines(
-                    config = AzureSpeechConfig(key = speechKey, region = speechRegion),
+                val audioFiles = synthesizeVoiceLinesViaProvider(
+                    provider = provider,
                     dialogue = dialogue,
                     lines = preparedLines
                 )
@@ -165,25 +181,17 @@ class AiVoiceService @Inject constructor(
                 diagnosticEventStore.record(
                     level = DiagnosticEventStore.LEVEL_ERROR,
                     category = DiagnosticEventStore.CATEGORY_APP_ERROR,
-                    eventId = if (errorMessage.contains("Azure TTS", ignoreCase = true)) {
-                        "azure_tts_failed"
-                    } else {
-                        "voice_playback_failed"
-                    },
-                    title = if (errorMessage.contains("Azure TTS", ignoreCase = true)) {
-                        "Azure 语音合成失败"
-                    } else {
-                        "语音播放失败"
-                    },
+                    eventId = "tts_provider_synthesis_failed",
+                    title = "${provider.displayName} 合成失败",
                     message = errorMessage.ifBlank { e::class.java.simpleName },
                     server = normalizedServer,
                     speaker = speaker,
-                    detail = preparedLines.joinToString("|") { "${it.speaker}:${it.profile.profileId}" },
+                    detail = "provider=${provider.providerId} lines=${preparedLines.joinToString("|") { "${it.speaker}:${it.profile.profileId}" }}",
                     voiceType = preparedLines.joinToString(",") { it.profile.description },
                     voiceName = preparedLines.joinToString(",") { it.profile.voiceName },
                     textPreview = dialogue.previewText()
                 )
-                FgoLogger.warn(tag, "AI voice playback skipped", e)
+                FgoLogger.warn(tag, "AI voice playback skipped for provider=${provider.providerId}", e)
             }
         }
     }
@@ -368,6 +376,56 @@ class AiVoiceService @Inject constructor(
                             pauseScale = line.expression?.pauseScale
                         )
                     )
+                }
+            }.awaitAll()
+        }
+    }
+
+    /**
+     * 通过 [TtsProvider] 抽象层统一合成多条音频。
+     * - 优先走音频缓存，命中则直接返回
+     * - 未命中时并发调用 provider.synthesizeToFile
+     * - 同时兼容保留原来的 Azure 专用分支，避免行为回归
+     */
+    private suspend fun synthesizeVoiceLinesViaProvider(
+        provider: TtsProvider,
+        dialogue: String,
+        lines: List<PreparedVoiceLine>
+    ): List<File> {
+        // Azure 保留原路径，以便利用其成熟的 SSML 构造和 HTTP client
+        if (provider is AzureTtsProvider) {
+            val key = settingsRepository.azureSpeechKey.first().trim()
+            val region = SettingsRepository.normalizeAzureSpeechRegion(
+                settingsRepository.azureSpeechRegion.first()
+            )
+            return synthesizeVoiceLines(
+                AzureSpeechConfig(key = key, region = region),
+                dialogue,
+                lines
+            )
+        }
+        return coroutineScope {
+            lines.map { line ->
+                async(Dispatchers.IO) {
+                    audioCache.cachedFile(line.cacheMaterial) ?: run {
+                        val outFile = audioCache.tempFileFor(line.cacheMaterial)
+                        val request = VoiceSynthesisRequest(
+                            speakerName = line.speaker,
+                            spokenText = dialogue,
+                            profile = line.profile,
+                            styleOverride = line.expression?.styleOverride,
+                            rateOverride = line.expression?.rateOverride,
+                            pitchOverride = line.expression?.pitchOverride,
+                            styleDegree = line.expression?.styleDegree,
+                            pauseScale = line.expression?.pauseScale,
+                            ssmlModeVersion = line.expression?.ssmlModeVersion,
+                            aiVoiceSpeedPercent = settingsRepository.aiVoiceSpeedPercent.first()
+                        )
+                        provider.synthesizeToFile(request, outFile)
+                        // 合成完成后，把临时文件登记为正式缓存项
+                        audioCache.promoteTempToCache(cacheMaterial = line.cacheMaterial, tempFile = outFile)
+                            ?: outFile
+                    }
                 }
             }.awaitAll()
         }
