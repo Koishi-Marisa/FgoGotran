@@ -1,3 +1,5 @@
+import java.net.URI
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -173,7 +175,7 @@ val prepareSherpaBuiltinAssets = tasks.register("prepareSherpaBuiltinAssets", Co
                 logger.lifecycle("[SherpaBuiltin] 开始下载 ${spec.url}")
                 archive.parentFile.mkdirs()
                 val tmp = File(archive.path + ".part")
-                java.net.URI.create(spec.url).toURL().openStream().use { input ->
+                URI.create(spec.url).toURL().openStream().use { input ->
                     tmp.outputStream().use { out -> input.copyTo(out) }
                 }
                 check(tmp.length() > (spec.approxBytes * 50 / 100)) {
