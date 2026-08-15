@@ -92,6 +92,7 @@ fun VoiceSettingsScreen(
     var aiVoiceMasterVoice by remember {
         mutableStateOf(SettingsRepository.DEFAULT_AI_VOICE_MASTER_VOICE)
     }
+    var ttsProvider by remember { mutableStateOf(SettingsRepository.DEFAULT_TTS_PROVIDER) }
     var azureSpeechKey by remember { mutableStateOf("") }
     var azureSpeechRegion by remember {
         mutableStateOf(SettingsRepository.DEFAULT_AZURE_SPEECH_REGION)
@@ -100,6 +101,9 @@ fun VoiceSettingsScreen(
     var azureSpeechTestMessage by remember { mutableStateOf("") }
     var azureSpeechTestIsError by remember { mutableStateOf(false) }
     var azureSpeechTesting by remember { mutableStateOf(false) }
+
+    val isAzureTtsProvider = ttsProvider == SettingsRepository.TTS_PROVIDER_AZURE
+    val isSherpaTtsProvider = ttsProvider == SettingsRepository.TTS_PROVIDER_SHERPA_ONNX
 
     LaunchedEffect(Unit) {
         aiVoiceEnabled = settingsRepository.aiVoiceEnabled.first()
@@ -110,6 +114,7 @@ fun VoiceSettingsScreen(
         aiVoiceNoSpeakerDialogueEnabled = settingsRepository.aiVoiceNoSpeakerDialogueEnabled.first()
         aiVoiceChoiceTextEnabled = settingsRepository.aiVoiceChoiceTextEnabled.first()
         aiVoiceMasterVoice = settingsRepository.aiVoiceMasterVoice.first()
+        ttsProvider = settingsRepository.ttsProvider.first()
         azureSpeechKey = settingsRepository.azureSpeechKey.first()
         azureSpeechRegion = settingsRepository.azureSpeechRegion.first()
     }
@@ -195,6 +200,34 @@ fun VoiceSettingsScreen(
                     onCheckedChange = {
                         aiVoiceEnabled = it
                         scope.launch { settingsRepository.setAiVoiceEnabled(it) }
+                    }
+                )
+            }
+
+            VoiceSettingsCard(
+                title = "语音合成引擎",
+                body = "选择使用云端 Azure 还是本地离线模型。"
+            ) {
+                VoiceTtsProviderOption(
+                    title = "Azure Neural TTS (云端)",
+                    subtitle = "需要 Azure Speech Key，音色最丰富",
+                    selected = isAzureTtsProvider,
+                    onClick = {
+                        ttsProvider = SettingsRepository.TTS_PROVIDER_AZURE
+                        scope.launch {
+                            settingsRepository.setTtsProvider(SettingsRepository.TTS_PROVIDER_AZURE)
+                        }
+                    }
+                )
+                VoiceTtsProviderOption(
+                    title = "Sherpa-ONNX 本地离线合成",
+                    subtitle = "无需 Key，使用内置 vits-zh-ll 模型",
+                    selected = isSherpaTtsProvider,
+                    onClick = {
+                        ttsProvider = SettingsRepository.TTS_PROVIDER_SHERPA_ONNX
+                        scope.launch {
+                            settingsRepository.setTtsProvider(SettingsRepository.TTS_PROVIDER_SHERPA_ONNX)
+                        }
                     }
                 )
             }
@@ -312,13 +345,13 @@ fun VoiceSettingsScreen(
 
             VoiceSettingsCard(
                 title = "Azure Speech",
-                body = "",
+                body = if (isSherpaTtsProvider) "当前使用本地离线合成，无需配置 Azure Key。" else "",
                 iconRes = R.drawable.ic_speech_services
             ) {
                 Text(
                     "Azure 区域",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f)
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isAzureTtsProvider) 0.82f else 0.48f)
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -329,7 +362,7 @@ fun VoiceSettingsScreen(
                         AzureSpeechRegionOptionRow(
                             option = option,
                             selected = option.region == azureSpeechRegion,
-                            enabled = !azureSpeechTesting,
+                            enabled = isAzureTtsProvider && !azureSpeechTesting,
                             onClick = {
                                 val normalizedRegion = SettingsRepository.normalizeAzureSpeechRegion(option.region)
                                 azureSpeechRegion = normalizedRegion
@@ -345,7 +378,7 @@ fun VoiceSettingsScreen(
                 Text(
                     "提示：可选全球 Azure；中国 Azure 需要组织/工作/学校账号，个人 Microsoft 账号不能登录使用。",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f)
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isAzureTtsProvider) 0.58f else 0.38f)
                 )
                 OutlinedTextField(
                     value = azureSpeechKey,
@@ -357,6 +390,7 @@ fun VoiceSettingsScreen(
                     },
                     label = { Text("Azure Speech Key") },
                     modifier = Modifier.fillMaxWidth(),
+                    enabled = isAzureTtsProvider,
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     supportingText = {
@@ -364,21 +398,23 @@ fun VoiceSettingsScreen(
                     },
                     singleLine = true
                 )
-                Text(
-                    "测试例句：玛修・基列莱特，在此。御主……战斗准备完成，请下达指示。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f)
-                )
-                if (azureSpeechTestMessage.isNotBlank()) {
+                if (isAzureTtsProvider) {
                     Text(
-                        azureSpeechTestMessage,
+                        "测试例句：玛修・基列莱特，在此。御主……战斗准备完成，请下达指示。",
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (azureSpeechTestIsError) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.primary
-                        }
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f)
                     )
+                    if (azureSpeechTestMessage.isNotBlank()) {
+                        Text(
+                            azureSpeechTestMessage,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (azureSpeechTestIsError) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            }
+                        )
+                    }
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -395,12 +431,15 @@ fun VoiceSettingsScreen(
                     }
                     OutlinedButton(
                         onClick = { testAzureVoice() },
-                        enabled = !azureSpeechTesting
+                        enabled = isAzureTtsProvider && !azureSpeechTesting
                     ) {
                         Text(if (azureSpeechTesting) "测试中..." else "测试语音")
                     }
                     Spacer(modifier = Modifier.width(8.dp))
-                    Button(onClick = { saveAzureSpeechSettings() }) {
+                    Button(
+                        onClick = { saveAzureSpeechSettings() },
+                        enabled = isAzureTtsProvider
+                    ) {
                         Text("保存语音设置")
                     }
                 }
@@ -757,6 +796,51 @@ private fun VoiceMasterVoiceOption(
                     }
                 )
             )
+        }
+    }
+}
+
+@Composable
+private fun VoiceTtsProviderOption(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.small,
+        color = if (selected) {
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.32f)
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f)
+        }
+    ) {
+        Row(
+            modifier = Modifier
+                .clickable(onClick = onClick)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            RadioButton(
+                selected = selected,
+                onClick = null
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface.copy(
+                        alpha = if (selected) 0.82f else 0.68f
+                    )
+                )
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f)
+                )
+            }
         }
     }
 }
