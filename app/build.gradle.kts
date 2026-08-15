@@ -141,19 +141,21 @@ val builtinCatalogBuiltin = mapOf(
 
 val sherpaCacheDir = rootProject.file(".gradle/sherpa-tts-cache").apply { mkdirs() }
 val sherpaGeneratedAssetsDir = file("$buildDir/generated/assets/sherpa_builtin")
-val prepareSherpaBuiltinAssets = tasks.register("prepareSherpaBuiltinAssets", Copy::class.java) {
+val builtinSpec = builtinCatalogBuiltin[builtinTtsModel]
+
+val downloadSherpaBuiltinModel = tasks.register("downloadSherpaBuiltinModel") {
     group = "fgogotran"
-    description = "下载并解压内置 Sherpa-ONNX 本地 TTS 模型到 assets (model=$builtinTtsModel)"
+    description = "下载内置 Sherpa-ONNX TTS 模型归档 (model=$builtinTtsModel)"
 
     onlyIf {
         val enabled = builtinTtsModel.lowercase() != "none"
         if (!enabled) {
-            logger.lifecycle("[SherpaBuiltin] fgogotran.builtinTtsModel=none，跳过内置模型打包")
+            logger.lifecycle("[SherpaBuiltin] fgogotran.builtinTtsModel=none，跳过内置模型下载")
         }
         enabled
     }
 
-    val spec = builtinCatalogBuiltin[builtinTtsModel]
+    val spec = builtinSpec
     doFirst {
         checkNotNull(spec) {
             "未知的 fgogotran.builtinTtsModel=$builtinTtsModel；允许的值：${builtinCatalogBuiltin.keys} + none"
@@ -165,37 +167,53 @@ val prepareSherpaBuiltinAssets = tasks.register("prepareSherpaBuiltinAssets", Co
         inputs.property("modelId", spec.id)
         inputs.property("url", spec.url)
         inputs.property("minBytes", spec.approxBytes)
-        outputs.dir(sherpaGeneratedAssetsDir)
+        outputs.file(archive)
 
-        // 下载 (幂等：已存在且大小不差 20% 就复用以省流量)
-        doFirst("download-$builtinTtsModel") {
+        doLast {
             if (archive.isFile && archive.length() > (spec.approxBytes * 70 / 100)) {
                 logger.lifecycle("[SherpaBuiltin] 复用缓存 ${archive.path} (${archive.length()} bytes)")
-            } else {
-                logger.lifecycle("[SherpaBuiltin] 开始下载 ${spec.url}")
-                archive.parentFile.mkdirs()
-                val tmp = File(archive.path + ".part")
-                URI.create(spec.url).toURL().openStream().use { input ->
-                    tmp.outputStream().use { out -> input.copyTo(out) }
-                }
-                check(tmp.length() > (spec.approxBytes * 50 / 100)) {
-                    "下载后文件太小 (${tmp.length()} bytes)，可能失败；URL=${spec.url}"
-                }
-                tmp.renameTo(archive)
-                logger.lifecycle("[SherpaBuiltin] 下载完成 (${archive.length()} bytes)")
+                return@doLast
             }
+            logger.lifecycle("[SherpaBuiltin] 开始下载 ${spec.url}")
+            archive.parentFile.mkdirs()
+            val tmp = File(archive.path + ".part")
+            URI.create(spec.url).toURL().openStream().use { input ->
+                tmp.outputStream().use { out -> input.copyTo(out) }
+            }
+            check(tmp.length() > (spec.approxBytes * 50 / 100)) {
+                "下载后文件太小 (${tmp.length()} bytes)，可能失败；URL=${spec.url}"
+            }
+            check(tmp.renameTo(archive)) {
+                "无法将临时文件重命名为 ${archive.path}"
+            }
+            logger.lifecycle("[SherpaBuiltin] 下载完成 (${archive.length()} bytes)")
         }
+    }
+}
 
+val prepareSherpaBuiltinAssets = tasks.register("prepareSherpaBuiltinAssets", Copy::class.java) {
+    group = "fgogotran"
+    description = "解压内置 Sherpa-ONNX 本地 TTS 模型到 generated assets (model=$builtinTtsModel)"
+
+    onlyIf { builtinTtsModel.lowercase() != "none" }
+
+    dependsOn(downloadSherpaBuiltinModel)
+    val spec = builtinSpec
+    val archive = File(sherpaCacheDir, "$builtinTtsModel.archive")
+
+    inputs.file(archive)
+    outputs.dir(sherpaGeneratedAssetsDir)
+
+    if (spec != null) {
         // 解压 + 剥离顶层目录，输出到 assets/sherpa_builtin_models/<id>/
         from(
             tarTree(resources.bzip2(archive)).matching {
-                // 剥离所有 wrapper 顶层目录
                 eachFile {
                     val segments = path.split('/', limit = 2)
-                    if (segments.size == 2) {
-                        path = "sherpa_builtin_models/${spec.id}/" + segments[1]
+                    path = if (segments.size == 2) {
+                        "sherpa_builtin_models/${spec.id}/" + segments[1]
                     } else {
-                        path = "sherpa_builtin_models/${spec.id}/$path"
+                        "sherpa_builtin_models/${spec.id}/$path"
                     }
                 }
                 includeEmptyDirs = false
