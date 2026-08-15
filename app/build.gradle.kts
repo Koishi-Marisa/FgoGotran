@@ -110,7 +110,8 @@ android {
     }
 
     packaging {
-        // sherpa-onnx AAR 自带 libonnxruntime.so，与 PaddleOCR 引入的 onnxruntime-android 重复
+        // sherpa-onnx AAR 自带 libonnxruntime.so；使用 Sherpa 版本以避免与 Microsoft ONNX Runtime 冲突。
+        // 若后续 PaddleOCR 需要 Microsoft 版本，再考虑拆分包名或改用本地 AAR。
         jniLibs.pickFirsts += listOf(
             "lib/arm64-v8a/libonnxruntime.so",
             "lib/armeabi-v7a/libonnxruntime.so",
@@ -271,7 +272,9 @@ dependencies {
     implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
 
     // PaddleOCR PP-OCRv6 ONNX runtime and polygon post-processing
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.27.0")
+    // 临时注释：与 Sherpa-ONNX 自带的 libonnxruntime.so 冲突，先使用 Sherpa 版本验证。
+    // 若 PaddleOCR 崩溃，需要为其中一方重命名 so 或拆分包名。
+    // implementation("com.microsoft.onnxruntime:onnxruntime-android:1.27.0")
     implementation("org.locationtech.jts:jts-core:1.19.0")
 
     // ===== Sherpa-ONNX 本地离线 TTS（默认开启推理引擎 + 默认内置中文 zh-ll 模型） =====
@@ -279,16 +282,9 @@ dependencies {
     //   1) 仅关闭 JNI 引擎，仍保留 Provider 抽象：-Pfgogotran.includeSherpaRuntime=false
     //   2) 仅不内置模型（保留引擎，支持手动下载）：   -Pfgogotran.builtinTtsModel=none
     if (includeSherpaRuntime) {
-        implementation("com.github.k2-fsa:sherpa-onnx:1.13.5") {
-            // Android 只需要 AAR；桌面 JVM/JNI 传递依赖会导致类重复与 so 冲突
-            exclude(group = "com.github.k2-fsa.sherpa-onnx", module = "sherpa-onnx-jvm")
-            exclude(group = "com.github.k2-fsa.sherpa-onnx", module = "sherpa-onnx-native-lib-linux-aarch64")
-            exclude(group = "com.github.k2-fsa.sherpa-onnx", module = "sherpa-onnx-native-lib-linux-x64")
-            exclude(group = "com.github.k2-fsa.sherpa-onnx", module = "sherpa-onnx-native-lib-osx-aarch64")
-            exclude(group = "com.github.k2-fsa.sherpa-onnx", module = "sherpa-onnx-native-lib-osx-x64")
-            exclude(group = "com.github.k2-fsa.sherpa-onnx", module = "sherpa-onnx-native-lib-win-arm64")
-            exclude(group = "com.github.k2-fsa.sherpa-onnx", module = "sherpa-onnx-native-lib-win-x64")
-        }
+        // 官方 Android AAR：包含 libsherpa-onnx-jni.so 与 libonnxruntime.so
+        // 坐标必须与官方示例一致：com.github.k2-fsa.sherpa-onnx:sherpa-onnx:v1.13.5
+        implementation("com.github.k2-fsa.sherpa-onnx:sherpa-onnx:v1.13.5")
     } else {
         logger.lifecycle("[SherpaBuiltin] includeSherpaRuntime=false，跳过 sherpa-onnx-android AAR 引入")
     }

@@ -4,6 +4,12 @@ import android.content.Context
 import com.fgogotran.data.SettingsRepository
 import com.fgogotran.diagnostic.DiagnosticEventStore
 import com.fgogotran.util.FgoLogger
+import com.k2fsa.sherpa.onnx.OfflineTts
+import com.k2fsa.sherpa.onnx.OfflineTtsConfig
+import com.k2fsa.sherpa.onnx.OfflineTtsKokoroModelConfig
+import com.k2fsa.sherpa.onnx.OfflineTtsMatchaModelConfig
+import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
+import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -20,22 +26,8 @@ import javax.inject.Singleton
 /**
  * Sherpa-ONNX 本地 TTS Provider。
  *
- * 使用 k2-fsa/sherpa-onnx 的 Android JNI 包（`libsherpa-onnx-jni.so`），
+ * 直接调用 k2-fsa/sherpa-onnx 的 Android Kotlin API（[OfflineTts]），
  * 通过 ONNX Runtime 推理 VITS / Piper / Kokoro / Matcha 等模型。
- *
- * ### 启用步骤（一次性，用户侧）
- * 在 app/build.gradle.kts 中加入：
- * ```
- * // 请与项目现有的 onnxruntime-android 版本对齐（当前 1.27.0）
- * implementation("io.github.k2-fsa:sherpa-onnx-android:1.14.0")
- * ```
- * 若 mavenCentral() 拉不到，可改为从 GitHub Release 下载 AAR 手动放入 app/libs/ 并：
- * ```
- * implementation(files("libs/sherpa-onnx-android.aar"))
- * ```
- *
- * 如果当前未引入 sherpa aar，[warmUp] 会检测并抛出，UI 层提示用户先下载
- * 模型包或切换为 Azure 云端合成。
  */
 @Singleton
 class SherpaOnnxTtsProvider @Inject constructor(
@@ -54,94 +46,33 @@ class SherpaOnnxTtsProvider @Inject constructor(
     private val tag = "SherpaTts"
     private val mutex = Mutex()
 
-    /** 当前加载的模型（sherpa 引擎句柄用 Long 持有，JNI 分配） */
-    private var activeModelHandle: Long = 0L
+    /** 当前加载的 Sherpa 引擎实例 */
+    private var tts: OfflineTts? = null
     private var activeModelId: String? = null
-    private var activeSampleRate: Int = 22050
-
-    /** 反射持有 JNI 入口，避免硬依赖（未安装 aar 时给友好提示） */
-    private object JniBridge {
-        var available: Boolean = false
-        var createFn: ((Array<String>) -> Long)? = null
-        var generateFn: ((handle: Long, text: String, sid: Int, speed: Float) -> AudioSamples)? = null
-        var destroyFn: ((handle: Long) -> Unit)? = null
-
-        fun tryBind() {
-            runCatching {
-                System.loadLibrary("sherpa-onnx-jni")
-                val cls = Class.forName("com.k2fsa.sherpa.onnx.OfflineTts")
-                val ctor = cls.getConstructor(Array<String>::class.java)
-                val generate = cls.getMethod(
-                    "generate",
-                    String::class.java,
-                    Int::class.javaPrimitiveType,
-                    Float::class.javaPrimitiveType
-                )
-                val destroy = cls.getMethod("delete")
-                createFn = { args ->
-                    val inst = ctor.newInstance(args)
-                    // 把实例以"地址"形式存进 map；简化处理，用实例的 identityHashCode 是不够的
-                    // 这里我们改用直接持有实例引用的方案，见下方 InstanceHolder
-                    InstanceHolder.put(inst)
-                }
-                generateFn = { handle, text, sid, speed ->
-                    val inst = InstanceHolder.get(handle)
-                        ?: error("Sherpa handle 无效: $handle")
-                    val result = generate.invoke(inst, text, sid, speed)
-                    // Sherpa generate() 返回 OfflineTtsGeneratedAudio，属性 samples/sampleRate
-                    val samplesArr = result.javaClass.getMethod("getSamples").invoke(result) as FloatArray
-                    val sr = result.javaClass.getMethod("getSampleRate").invoke(result) as Int
-                    AudioSamples(samplesArr, sr)
-                }
-                destroyFn = { handle ->
-                    val inst = InstanceHolder.remove(handle)
-                    inst?.let { destroy.invoke(it) }
-                    Unit
-                }
-                available = true
-                FgoLogger.info("SherpaJNI", "sherpa-onnx-jni 绑定成功")
-            }.onFailure {
-                FgoLogger.warn("SherpaJNI", "sherpa-onnx-jni 不可用：${it.message}")
-                available = false
-            }
-        }
-    }
-
-    /** 为了避免把 JNI 类写死，用一个 holder 将实例映射为 Long "句柄" */
-    private object InstanceHolder {
-        private var nextHandle = 1L
-        private val map = mutableMapOf<Long, Any>()
-        fun put(inst: Any): Long = synchronized(this) {
-            val h = nextHandle++
-            map[h] = inst; h
-        }
-        fun get(h: Long): Any? = synchronized(this) { map[h] }
-        fun remove(h: Long): Any? = synchronized(this) { map.remove(h) }
-        fun clear() = synchronized(this) {
-            map.values.toList().forEach { inst ->
-                runCatching { inst.javaClass.getMethod("delete").invoke(inst) }
-            }
-            map.clear()
-        }
-    }
-
-    private data class AudioSamples(val floats: FloatArray, val sampleRate: Int)
 
     // =====================================================================
     // 生命周期
     // =====================================================================
     override suspend fun warmUp() {
-        if (!JniBridge.available) {
-            withContext(Dispatchers.IO) { JniBridge.tryBind() }
+        if (tts != null) return
+
+        // 触发 OfflineTts 类加载，其 companion init 会 System.loadLibrary("sherpa-onnx-jni")。
+        // 如果 APK 未包含对应 so，这里会抛出 UnsatisfiedLinkError，转成友好提示。
+        withContext(Dispatchers.IO) {
+            try {
+                Class.forName("com.k2fsa.sherpa.onnx.OfflineTts")
+            } catch (e: Throwable) {
+                throw IllegalStateException(
+                    "Sherpa-ONNX JNI 库未找到。请确认 APK 包含 sherpa-onnx 运行时，" +
+                        "或切换为 Azure 云端合成。",
+                    e
+                )
+            }
         }
-        if (!JniBridge.available) {
-            throw IllegalStateException(
-                "Sherpa-ONNX JNI 库未找到。请先在 build.gradle.kts 添加 sherpa-onnx-android.aar，" +
-                    "或切换为 Azure 云端合成。"
-            )
-        }
+
         // 1) 若 APK 里打了 assets/sherpa_builtin_models/<id>/，首次启动自动静默安装
         registry.ensureAssetsModelsInstalled()
+
         // 2) 尝试自动加载一个已安装的模型，后续 synthesize 可直接使用
         val preferred = registry.preferredInstalled() ?: run {
             FgoLogger.warn(tag, "当前尚未安装任何本地 TTS 模型")
@@ -151,11 +82,9 @@ class SherpaOnnxTtsProvider @Inject constructor(
     }
 
     override fun close() {
-        if (activeModelHandle != 0L) {
-            runCatching { JniBridge.destroyFn?.invoke(activeModelHandle) }
-            activeModelHandle = 0L
-        }
-        InstanceHolder.clear()
+        tts?.free()
+        tts = null
+        activeModelId = null
     }
 
     // =====================================================================
@@ -167,6 +96,7 @@ class SherpaOnnxTtsProvider @Inject constructor(
     ): Boolean = withContext(Dispatchers.Default) {
         mutex.withLock {
             warmUpIfNeeded()
+
             val installed = registry.listInstalled().firstOrNull { it.manifest.modelId == activeModelId }
                 ?: registry.preferredInstalled()
                 ?: throw IllegalStateException("没有已安装的本地 TTS 模型，请到「语音设置」中下载")
@@ -187,14 +117,14 @@ class SherpaOnnxTtsProvider @Inject constructor(
             val text = request.spokenText.trim()
                 .ifBlank { throw IllegalArgumentException("合成文本为空") }
 
-            val audio = JniBridge.generateFn?.invoke(activeModelHandle, text, sid, speed)
-                ?: throw IllegalStateException("Sherpa generate 句柄未初始化")
+            val audio = tts?.generate(text, sid, speed)
+                ?: throw IllegalStateException("Sherpa OfflineTts 未初始化")
 
             outputFile.parentFile?.mkdirs()
-            writeWav(outputFile, audio.floats, audio.sampleRate)
+            writeWav(outputFile, audio.samples, audio.sampleRate)
             FgoLogger.info(
                 tag,
-                "本地合成完成: sid=$sid rate=$speed samples=${audio.floats.size} sr=${audio.sampleRate} → ${outputFile.name}"
+                "本地合成完成: sid=$sid rate=$speed samples=${audio.samples.size} sr=${audio.sampleRate} → ${outputFile.name}"
             )
             true
         }
@@ -233,24 +163,85 @@ class SherpaOnnxTtsProvider @Inject constructor(
     // 内部
     // =====================================================================
     private suspend fun warmUpIfNeeded() {
-        if (!JniBridge.available) warmUp()
+        if (tts == null) warmUp()
     }
 
     private suspend fun ensureModelLoaded(installed: InstalledSherpaModel) {
-        if (activeModelId == installed.manifest.modelId && activeModelHandle != 0L) return
+        if (activeModelId == installed.manifest.modelId && tts != null) return
+
         // 释放旧模型
-        if (activeModelHandle != 0L) {
-            runCatching { JniBridge.destroyFn?.invoke(activeModelHandle) }
-            activeModelHandle = 0L
-        }
-        val configMap = installed.manifest.configForInstallDir(installed.installDir)
-        val args = configMap.flatMap { (k, v) -> listOf("--$k", v) }.toTypedArray()
-        FgoLogger.info(tag, "加载 Sherpa 模型 ${installed.manifest.modelId} args=${args.joinToString(" ")}")
-        val handle = JniBridge.createFn?.invoke(args)
-            ?: throw IllegalStateException("Sherpa OfflineTts create 失败")
-        activeModelHandle = handle
+        tts?.free()
+        tts = null
+        activeModelId = null
+
+        val config = buildTtsConfig(installed)
+        FgoLogger.info(tag, "加载 Sherpa 模型 ${installed.manifest.modelId}")
+        tts = OfflineTts(config = config)
         activeModelId = installed.manifest.modelId
-        activeSampleRate = installed.manifest.sampleRate
+    }
+
+    private fun buildTtsConfig(installed: InstalledSherpaModel): OfflineTtsConfig {
+        val dir = installed.installDir
+        val baseModelConfig = OfflineTtsModelConfig(
+            numThreads = 2,
+            debug = false,
+            provider = "cpu"
+        )
+
+        return when (installed.manifest.modelType) {
+            SherpaModelType.VITS_PLAIN -> {
+                val vits = OfflineTtsVitsModelConfig(
+                    model = "$dir/model.onnx",
+                    tokens = "$dir/tokens.txt",
+                    lexicon = ""
+                )
+                val dictDir = File(dir, "dict")
+                if (dictDir.isDirectory) {
+                    vits.dictDir = dictDir.absolutePath
+                }
+                OfflineTtsConfig(model = baseModelConfig.copy(vits = vits))
+            }
+
+            SherpaModelType.PIPER_VITS -> {
+                val vits = OfflineTtsVitsModelConfig(
+                    model = "$dir/model.onnx",
+                    tokens = "$dir/tokens.txt",
+                    dataDir = "$dir/espeak-ng-data"
+                )
+                OfflineTtsConfig(model = baseModelConfig.copy(vits = vits))
+            }
+
+            SherpaModelType.KOKORO_82M -> {
+                val lexicon = listOfNotNull(
+                    "$dir/lexicon-zh.txt".takeIf { File(it).exists() },
+                    "$dir/lexicon-us-en.txt".takeIf { File(it).exists() }
+                ).joinToString(",")
+                val kokoro = OfflineTtsKokoroModelConfig(
+                    model = "$dir/model.onnx",
+                    voices = "$dir/voices.bin",
+                    tokens = "$dir/tokens.txt",
+                    lexicon = lexicon,
+                    lang = installed.manifest.language.takeIf { it.isNotBlank() } ?: "zh"
+                )
+                OfflineTtsConfig(model = baseModelConfig.copy(kokoro = kokoro))
+            }
+
+            SherpaModelType.MATCHA_TTS -> {
+                val acoustic = File(dir, "model.onnx")
+                    .takeIf { it.exists() }
+                    ?: throw IllegalStateException("Matcha TTS 缺少 acoustic model")
+                val vocoder = File(dir, "hifigan.onnx").takeIf { it.exists() }
+                    ?: File(dir, "vocoder.onnx").takeIf { it.exists() }
+                    ?: throw IllegalStateException("Matcha TTS 缺少 vocoder 模型")
+                val matcha = OfflineTtsMatchaModelConfig(
+                    acousticModel = acoustic.absolutePath,
+                    vocoder = vocoder.absolutePath,
+                    tokens = "$dir/tokens.txt",
+                    dataDir = "$dir/espeak-ng-data"
+                )
+                OfflineTtsConfig(model = baseModelConfig.copy(matcha = matcha))
+            }
+        }
     }
 
     private suspend fun resolveSpeed(request: VoiceSynthesisRequest): Float {

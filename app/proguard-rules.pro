@@ -20,3 +20,9 @@
 # Native JNI code looks up these Java classes by name.
 -keep class ai.onnxruntime.** { *; }
 -dontwarn ai.onnxruntime.**
+
+# Sherpa-ONNX
+# JNI registration uses exact class names and native method signatures.
+-keep class com.k2fsa.sherpa.onnx.** { *; }
+-keepclassmembers class com.k2fsa.sherpa.onnx.** { *; }
+-dontwarn com.k2fsa.sherpa.onnx.**
