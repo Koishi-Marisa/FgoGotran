@@ -108,6 +108,16 @@ android {
             "onnx", "bin", "pb", "txt", "dict", "fst", "data", "so"
         )
     }
+
+    packaging {
+        // sherpa-onnx AAR 自带 libonnxruntime.so，与 PaddleOCR 引入的 onnxruntime-android 重复
+        jniLibs.pickFirsts += listOf(
+            "lib/arm64-v8a/libonnxruntime.so",
+            "lib/armeabi-v7a/libonnxruntime.so",
+            "lib/x86_64/libonnxruntime.so",
+            "lib/x86/libonnxruntime.so"
+        )
+    }
 }
 
 // ======================================================================
@@ -267,7 +277,16 @@ dependencies {
     //   1) 仅关闭 JNI 引擎，仍保留 Provider 抽象：-Pfgogotran.includeSherpaRuntime=false
     //   2) 仅不内置模型（保留引擎，支持手动下载）：   -Pfgogotran.builtinTtsModel=none
     if (includeSherpaRuntime) {
-        implementation("com.github.k2-fsa:sherpa-onnx:1.13.5")
+        implementation("com.github.k2-fsa:sherpa-onnx:1.13.5") {
+            // Android 只需要 AAR；桌面 JVM/JNI 传递依赖会导致类重复与 so 冲突
+            exclude(group = "com.github.k2-fsa.sherpa-onnx", module = "sherpa-onnx-jvm")
+            exclude(group = "com.github.k2-fsa.sherpa-onnx", module = "sherpa-onnx-native-lib-linux-aarch64")
+            exclude(group = "com.github.k2-fsa.sherpa-onnx", module = "sherpa-onnx-native-lib-linux-x64")
+            exclude(group = "com.github.k2-fsa.sherpa-onnx", module = "sherpa-onnx-native-lib-osx-aarch64")
+            exclude(group = "com.github.k2-fsa.sherpa-onnx", module = "sherpa-onnx-native-lib-osx-x64")
+            exclude(group = "com.github.k2-fsa.sherpa-onnx", module = "sherpa-onnx-native-lib-win-arm64")
+            exclude(group = "com.github.k2-fsa.sherpa-onnx", module = "sherpa-onnx-native-lib-win-x64")
+        }
     } else {
         logger.lifecycle("[SherpaBuiltin] includeSherpaRuntime=false，跳过 sherpa-onnx-android AAR 引入")
     }
