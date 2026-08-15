@@ -272,9 +272,9 @@ dependencies {
     implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
 
     // PaddleOCR PP-OCRv6 ONNX runtime and polygon post-processing
-    // 临时注释：与 Sherpa-ONNX 自带的 libonnxruntime.so 冲突，先使用 Sherpa 版本验证。
-    // 若 PaddleOCR 崩溃，需要为其中一方重命名 so 或拆分包名。
-    // implementation("com.microsoft.onnxruntime:onnxruntime-android:1.27.0")
+    // 注意：该依赖也包含 libonnxruntime.so；在 packaging 中通过 pickFirsts 保留 Sherpa-ONNX 版本。
+    // 若运行时 PaddleOCR 推理异常，再考虑拆分包名或改用本地 AAR。
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.27.1")
     implementation("org.locationtech.jts:jts-core:1.19.0")
 
     // ===== Sherpa-ONNX 本地离线 TTS（默认开启推理引擎 + 默认内置中文 zh-ll 模型） =====
