@@ -23,7 +23,8 @@ import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
-data class AzureVoiceTestResult(
+data class TtsTestResult(
+    val provider: String,
     val speakerName: String,
     val dialogue: String,
     val voiceName: String,
@@ -196,20 +197,51 @@ class AiVoiceService @Inject constructor(
         }
     }
 
-    suspend fun playAzureVoiceTest(
+    suspend fun playTtsTest(
         speakerName: String,
         dialogue: String,
         voiceHint: VoiceLineHint? = null
-    ): AzureVoiceTestResult {
-        val speechKey = settingsRepository.azureSpeechKey.first().trim()
-        if (speechKey.isBlank()) {
-            throw IllegalArgumentException("Azure Speech key is blank")
-        }
-
+    ): TtsTestResult {
         val cleanSpeaker = normalizeVisibleSpeakerName(speakerName)
             .ifBlank { TEST_VOICE_SPEAKER_JP }
         val cleanDialogue = voiceTextFor(dialogue)
             ?: throw IllegalArgumentException("Test dialogue is blank")
+        val voiceSpeedPercent = settingsRepository.aiVoiceSpeedPercent.first()
+        val voiceVolumePercent = settingsRepository.aiVoiceVolumePercent.first()
+
+        val provider = currentProvider()
+        return when (provider) {
+            is AzureTtsProvider -> playAzureTtsTest(
+                provider = provider,
+                cleanSpeaker = cleanSpeaker,
+                cleanDialogue = cleanDialogue,
+                voiceHint = voiceHint,
+                voiceSpeedPercent = voiceSpeedPercent,
+                voiceVolumePercent = voiceVolumePercent
+            )
+            is SherpaOnnxTtsProvider -> playSherpaTtsTest(
+                provider = provider,
+                cleanSpeaker = cleanSpeaker,
+                cleanDialogue = cleanDialogue,
+                voiceSpeedPercent = voiceSpeedPercent,
+                voiceVolumePercent = voiceVolumePercent
+            )
+            else -> throw IllegalStateException("Unknown TTS provider: ${provider.providerId}")
+        }
+    }
+
+    private suspend fun playAzureTtsTest(
+        provider: AzureTtsProvider,
+        cleanSpeaker: String,
+        cleanDialogue: String,
+        voiceHint: VoiceLineHint?,
+        voiceSpeedPercent: Int,
+        voiceVolumePercent: Int
+    ): TtsTestResult {
+        val speechKey = settingsRepository.azureSpeechKey.first().trim()
+        if (speechKey.isBlank()) {
+            throw IllegalArgumentException("Azure Speech key is blank")
+        }
 
         withContext(Dispatchers.IO) {
             characterVoiceRepository.reload()
@@ -217,7 +249,6 @@ class AiVoiceService @Inject constructor(
 
         val profile = resolveCuratedTestProfile(cleanSpeaker)
             ?: throw IllegalStateException("Mash voice profile not found in CDN voice data")
-        val voiceSpeedPercent = settingsRepository.aiVoiceSpeedPercent.first()
         val expression = voiceExpressionFor(
             profile = profile,
             dialogue = cleanDialogue,
@@ -240,7 +271,6 @@ class AiVoiceService @Inject constructor(
             azureSpeechRegion = speechRegion,
             aiVoiceSpeedPercent = voiceSpeedPercent
         )
-        val voiceVolumePercent = settingsRepository.aiVoiceVolumePercent.first()
         val audioFile = withContext(Dispatchers.IO) {
             audioCache.cachedFile(request.cacheMaterial()) ?: audioCache.write(
                 cacheMaterial = request.cacheMaterial(),
@@ -265,12 +295,58 @@ class AiVoiceService @Inject constructor(
             tag,
             "Azure voice test played speaker=$cleanSpeaker voice=${profile.voiceName} hintApplied=$voiceHintApplied"
         )
-        return AzureVoiceTestResult(
+        return TtsTestResult(
+            provider = provider.providerId,
             speakerName = cleanSpeaker,
             dialogue = cleanDialogue,
             voiceName = profile.voiceName,
             profileId = profile.profileId,
             voiceHintApplied = voiceHintApplied
+        )
+    }
+
+    private suspend fun playSherpaTtsTest(
+        provider: SherpaOnnxTtsProvider,
+        cleanSpeaker: String,
+        cleanDialogue: String,
+        voiceSpeedPercent: Int,
+        voiceVolumePercent: Int
+    ): TtsTestResult {
+        provider.warmUp()
+        val voices = provider.listAvailableVoices()
+        if (voices.isEmpty()) {
+            throw IllegalStateException("没有可用的本地 TTS 模型，请确认内置模型已安装")
+        }
+        val profile = voices.first()
+        val request = VoiceSynthesisRequest(
+            speakerName = cleanSpeaker,
+            spokenText = cleanDialogue,
+            profile = profile,
+            aiVoiceSpeedPercent = voiceSpeedPercent
+        )
+        val cacheMaterial = request.cacheMaterial()
+        val audioFile = withContext(Dispatchers.IO) {
+            audioCache.cachedFile(cacheMaterial) ?: run {
+                val tempFile = audioCache.tempFileFor(cacheMaterial)
+                provider.synthesizeToFile(request, tempFile)
+                audioCache.promoteTempToCache(cacheMaterial = cacheMaterial, tempFile = tempFile)
+                    ?: tempFile
+            }
+        }
+        withContext(Dispatchers.Main) {
+            playbackEngine.play(audioFile, voiceVolumePercent)
+        }
+        FgoLogger.info(
+            tag,
+            "Sherpa voice test played speaker=$cleanSpeaker voice=${profile.voiceName}"
+        )
+        return TtsTestResult(
+            provider = provider.providerId,
+            speakerName = cleanSpeaker,
+            dialogue = cleanDialogue,
+            voiceName = profile.voiceName,
+            profileId = profile.profileId,
+            voiceHintApplied = false
         )
     }
 

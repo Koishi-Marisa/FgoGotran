@@ -54,7 +54,7 @@ import com.fgogotran.data.SettingsRepository
 import com.fgogotran.translation.Translator
 import com.fgogotran.translation.VoiceLineHint
 import com.fgogotran.voice.AiVoiceService
-import com.fgogotran.voice.AzureVoiceTestResult
+import com.fgogotran.voice.TtsTestResult
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -126,7 +126,7 @@ fun VoiceSettingsScreen(
         }
     }
 
-    fun testAzureVoice() {
+    fun testTtsVoice() {
         if (azureSpeechTesting) return
         scope.launch {
             azureSpeechTesting = true
@@ -134,14 +134,16 @@ fun VoiceSettingsScreen(
             azureSpeechTestIsError = false
             azureSpeechTestMessage = "正在生成测试语音..."
             try {
-                if (azureSpeechKey.trim().isBlank()) {
+                if (isAzureTtsProvider && azureSpeechKey.trim().isBlank()) {
                     throw IllegalArgumentException("Azure Speech key is blank")
                 }
-                settingsRepository.saveAzureSpeechSettings(azureSpeechKey, azureSpeechRegion)
+                if (isAzureTtsProvider) {
+                    settingsRepository.saveAzureSpeechSettings(azureSpeechKey, azureSpeechRegion)
+                }
                 val sample = azureVoiceTestSample(settingsRepository.targetChineseLocale.first())
                 var voiceHint: VoiceLineHint? = null
                 var voiceHintError: Throwable? = null
-                if (aiVoiceApiHintsEnabled) {
+                if (isAzureTtsProvider && aiVoiceApiHintsEnabled) {
                     runCatching {
                         translator.testVoiceHint(sample.speakerName, sample.dialogue)
                     }.onSuccess { hint ->
@@ -150,19 +152,19 @@ fun VoiceSettingsScreen(
                         voiceHintError = error
                     }
                 }
-                val result = aiVoiceService.playAzureVoiceTest(
+                val result = aiVoiceService.playTtsTest(
                     speakerName = sample.speakerName,
                     dialogue = sample.dialogue,
                     voiceHint = voiceHint
                 )
                 azureSpeechTestMessage = voiceTestSuccessMessage(
                     result = result,
-                    apiHintsEnabled = aiVoiceApiHintsEnabled,
+                    apiHintsEnabled = isAzureTtsProvider && aiVoiceApiHintsEnabled,
                     apiHintError = voiceHintError
                 )
             } catch (e: Throwable) {
                 azureSpeechTestIsError = true
-                azureSpeechTestMessage = voiceTestErrorMessage(e)
+                azureSpeechTestMessage = voiceTestErrorMessage(e, isSherpaTtsProvider)
             } finally {
                 azureSpeechTesting = false
             }
@@ -398,23 +400,21 @@ fun VoiceSettingsScreen(
                     },
                     singleLine = true
                 )
-                if (isAzureTtsProvider) {
+                Text(
+                    "测试例句：玛修・基列莱特，在此。御主……战斗准备完成，请下达指示。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isAzureTtsProvider) 0.58f else 0.48f)
+                )
+                if (azureSpeechTestMessage.isNotBlank()) {
                     Text(
-                        "测试例句：玛修・基列莱特，在此。御主……战斗准备完成，请下达指示。",
+                        azureSpeechTestMessage,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f)
+                        color = if (azureSpeechTestIsError) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        }
                     )
-                    if (azureSpeechTestMessage.isNotBlank()) {
-                        Text(
-                            azureSpeechTestMessage,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (azureSpeechTestIsError) {
-                                MaterialTheme.colorScheme.error
-                            } else {
-                                MaterialTheme.colorScheme.primary
-                            }
-                        )
-                    }
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -430,10 +430,16 @@ fun VoiceSettingsScreen(
                         Spacer(modifier = Modifier.width(12.dp))
                     }
                     OutlinedButton(
-                        onClick = { testAzureVoice() },
-                        enabled = isAzureTtsProvider && !azureSpeechTesting
+                        onClick = { testTtsVoice() },
+                        enabled = !azureSpeechTesting
                     ) {
-                        Text(if (azureSpeechTesting) "测试中..." else "测试语音")
+                        Text(
+                            when {
+                                azureSpeechTesting -> "测试中..."
+                                isSherpaTtsProvider -> "测试本地语音"
+                                else -> "测试语音"
+                            }
+                        )
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
@@ -490,7 +496,7 @@ private fun azureVoiceTestSample(targetChineseLocale: String): AzureVoiceTestSam
 }
 
 private fun voiceTestSuccessMessage(
-    result: AzureVoiceTestResult,
+    result: TtsTestResult,
     apiHintsEnabled: Boolean,
     apiHintError: Throwable?
 ): String {
@@ -503,9 +509,19 @@ private fun voiceTestSuccessMessage(
     return "测试语音已播放$apiStatus"
 }
 
-private fun voiceTestErrorMessage(error: Throwable): String {
+private fun voiceTestErrorMessage(error: Throwable, isSherpa: Boolean): String {
     val message = error.message.orEmpty()
     return when {
+        isSherpa && (
+            message.contains("JNI 库未找到", ignoreCase = true) ||
+                message.contains("sherpa-onnx-jni", ignoreCase = true)
+            ) -> {
+            "本地 TTS 库未找到，请确认 APK 包含 sherpa-onnx 运行时"
+        }
+        isSherpa && message.contains("没有已安装的本地 TTS 模型", ignoreCase = true) -> {
+            "内置模型未安装，请重启应用或检查存储权限"
+        }
+        isSherpa -> "本地 TTS 测试失败：${message.take(96)}"
         message.contains("Azure Speech key is blank", ignoreCase = true) -> {
             "Azure Speech Key 为空"
         }
