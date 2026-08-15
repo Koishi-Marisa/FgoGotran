@@ -235,7 +235,9 @@ val prepareSherpaBuiltinAssets = tasks.register("prepareSherpaBuiltinAssets", Co
 
 tasks.whenTaskAdded {
     val name = this.name
-    if (name.startsWith("merge") && name.endsWith("Assets")) {
+    if ((name.startsWith("merge") && name.endsWith("Assets")) ||
+        name.contains("Lint", ignoreCase = true)
+    ) {
         this.dependsOn(prepareSherpaBuiltinAssets)
     }
 }
