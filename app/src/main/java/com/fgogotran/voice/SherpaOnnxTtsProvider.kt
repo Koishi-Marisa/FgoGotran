@@ -140,7 +140,9 @@ class SherpaOnnxTtsProvider @Inject constructor(
                     "或切换为 Azure 云端合成。"
             )
         }
-        // 尝试自动加载一个已安装的模型，后续 synthesize 可直接使用
+        // 1) 若 APK 里打了 assets/sherpa_builtin_models/<id>/，首次启动自动静默安装
+        registry.ensureAssetsModelsInstalled()
+        // 2) 尝试自动加载一个已安装的模型，后续 synthesize 可直接使用
         val preferred = registry.preferredInstalled() ?: run {
             FgoLogger.warn(tag, "当前尚未安装任何本地 TTS 模型")
             return

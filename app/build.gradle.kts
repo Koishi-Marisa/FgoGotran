@@ -7,6 +7,21 @@ plugins {
     id("com.google.dagger.hilt.android")
 }
 
+// ======================================================================
+// 项目属性开关（可用 -Pxxx=yyy 或 gradle.properties 注入）：
+//   fgogotran.builtinTtsModel
+//       打包到 APK assets/sherpa_builtin_models/<id>/ 里的内置模型。
+//       默认 "vits-zh-ll"（官方中文多音色 113MB，方案 A 映射齐全）。
+//       取值：vits-zh-ll / vits-zh-fanchen-C / kokoro-multi-v1_1-int8 / none
+//   fgogotran.includeSherpaRuntime
+//       是否启用 sherpa-onnx-android AAR（JNI 推理引擎）。默认 true。
+//       若只想用云端 Azure TTS，可设为 false 以减小 APK 体积。
+// ======================================================================
+val builtinTtsModel = (project.findProperty("fgogotran.builtinTtsModel") as? String)
+    ?.takeIf { it.isNotBlank() } ?: "vits-zh-ll"
+val includeSherpaRuntime = (project.findProperty("fgogotran.includeSherpaRuntime") as? String)
+    ?.toBooleanStrictOrNull() ?: true
+
 android {
     namespace = "com.fgogotran"
     compileSdk = 34
@@ -21,6 +36,13 @@ android {
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
         }
+    }
+
+    // generated assets：内置 Sherpa 模型由 Gradle 下载后放在这里
+    sourceSets {
+        getByName("main").assets.srcDir(
+            "$buildDir/generated/assets/sherpa_builtin"
+        )
     }
 
     // ===== CI 签名策略 =====
@@ -79,7 +101,112 @@ android {
     }
 
     androidResources {
-        noCompress += "onnx"
+        // 不要压缩 onnx / voices.bin / dict / tokens 等大文件，否则运行时 AssetManager.openFd 会失败
+        noCompress += listOf(
+            "onnx", "bin", "pb", "txt", "dict", "fst", "data", "so"
+        )
+    }
+}
+
+// ======================================================================
+// 内置 TTS 模型：下载（带缓存）→ 解压并剥离 wrapper 目录 → 拷贝到 generated assets
+// 执行时机：自动挂到 mergeDebugAssets / mergeReleaseAssets 之前
+// ======================================================================
+data class BuiltinModelSpec(val id: String, val url: String, val approxBytes: Long)
+
+val builtinCatalogBuiltin = mapOf(
+    "vits-zh-ll" to BuiltinModelSpec(
+        id = "vits-zh-ll",
+        url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-vits-zh-ll.tar.bz2",
+        approxBytes = 113L * 1024 * 1024
+    ),
+    "vits-zh-fanchen-C" to BuiltinModelSpec(
+        id = "vits-zh-fanchen-C",
+        url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-zh-hf-fanchen-C.tar.bz2",
+        approxBytes = 114L * 1024 * 1024
+    ),
+    "kokoro-multi-v1_1-int8" to BuiltinModelSpec(
+        id = "kokoro-multi-v1_1-int8",
+        url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_1.tar.bz2",
+        approxBytes = 140L * 1024 * 1024
+    ),
+    "piper-zh_CN-xiao_ya-medium" to BuiltinModelSpec(
+        id = "piper-zh_CN-xiao_ya-medium",
+        url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-zh_CN-xiao_ya-medium.tar.bz2",
+        approxBytes = 58L * 1024 * 1024
+    )
+)
+
+val sherpaCacheDir = rootProject.file(".gradle/sherpa-tts-cache").apply { mkdirs() }
+val sherpaGeneratedAssetsDir = file("$buildDir/generated/assets/sherpa_builtin")
+val prepareSherpaBuiltinAssets = tasks.register("prepareSherpaBuiltinAssets", Copy::class.java) {
+    group = "fgogotran"
+    description = "下载并解压内置 Sherpa-ONNX 本地 TTS 模型到 assets (model=$builtinTtsModel)"
+
+    onlyIf {
+        val enabled = builtinTtsModel.lowercase() != "none"
+        if (!enabled) {
+            logger.lifecycle("[SherpaBuiltin] fgogotran.builtinTtsModel=none，跳过内置模型打包")
+        }
+        enabled
+    }
+
+    val spec = builtinCatalogBuiltin[builtinTtsModel]
+    doFirst {
+        checkNotNull(spec) {
+            "未知的 fgogotran.builtinTtsModel=$builtinTtsModel；允许的值：${builtinCatalogBuiltin.keys} + none"
+        }
+    }
+
+    if (spec != null) {
+        val archive = File(sherpaCacheDir, "$builtinTtsModel.archive")
+        inputs.property("modelId", spec.id)
+        inputs.property("url", spec.url)
+        inputs.property("minBytes", spec.approxBytes)
+        outputs.dir(sherpaGeneratedAssetsDir)
+
+        // 下载 (幂等：已存在且大小不差 20% 就复用以省流量)
+        doFirst("download-$builtinTtsModel") {
+            if (archive.isFile && archive.length() > (spec.approxBytes * 70 / 100)) {
+                logger.lifecycle("[SherpaBuiltin] 复用缓存 ${archive.path} (${archive.length()} bytes)")
+            } else {
+                logger.lifecycle("[SherpaBuiltin] 开始下载 ${spec.url}")
+                archive.parentFile.mkdirs()
+                val tmp = File(archive.path + ".part")
+                java.net.URI.create(spec.url).toURL().openStream().use { input ->
+                    tmp.outputStream().use { out -> input.copyTo(out) }
+                }
+                check(tmp.length() > (spec.approxBytes * 50 / 100)) {
+                    "下载后文件太小 (${tmp.length()} bytes)，可能失败；URL=${spec.url}"
+                }
+                tmp.renameTo(archive)
+                logger.lifecycle("[SherpaBuiltin] 下载完成 (${archive.length()} bytes)")
+            }
+        }
+
+        // 解压 + 剥离顶层目录，输出到 assets/sherpa_builtin_models/<id>/
+        from(
+            tarTree(resources.bzip2(archive)).matching {
+                // 剥离所有 wrapper 顶层目录
+                eachFile {
+                    val segments = path.split('/', limit = 2)
+                    if (segments.size == 2) {
+                        path = "sherpa_builtin_models/${spec.id}/" + segments[1]
+                    } else {
+                        path = "sherpa_builtin_models/${spec.id}/$path"
+                    }
+                }
+                includeEmptyDirs = false
+            }
+        )
+        into(sherpaGeneratedAssetsDir)
+    }
+}
+
+tasks.whenTaskAdded {
+    val name = this.name
+    if (name.startsWith("merge") && name.endsWith("Assets")) {
+        this.dependsOn(prepareSherpaBuiltinAssets)
     }
 }
 
@@ -115,15 +242,19 @@ dependencies {
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.27.0")
     implementation("org.locationtech.jts:jts-core:1.19.0")
 
-    // ===== Sherpa-ONNX 本地离线 TTS（可选启用） =====
-    // 项目已通过 TtsProvider 抽象层支持 Sherpa-ONNX。
-    // 启用方法（任选其一）：
-    //   1) 从 mavenCentral 拉取（需与 onnxruntime-android 版本对齐）：
-    //      implementation("io.github.k2-fsa:sherpa-onnx-android:1.14.0")
-    //   2) 从 https://github.com/k2-fsa/sherpa-onnx/releases 下载官方 AAR
-    //      放入 app/libs/sherpa-onnx-android.aar，再：
-    //      implementation(files("libs/sherpa-onnx-android.aar"))
-    // 启用后即可使用 Piper / VITS / Kokoro / Matcha 等 100+ 社区模型本地合成。
+    // ===== Sherpa-ONNX 本地离线 TTS（默认开启推理引擎 + 默认内置中文 zh-ll 模型） =====
+    // 关闭方式（二选一）：
+    //   1) 仅关闭 JNI 引擎，仍保留 Provider 抽象：-Pfgogotran.includeSherpaRuntime=false
+    //   2) 仅不内置模型（保留引擎，支持手动下载）：   -Pfgogotran.builtinTtsModel=none
+    if (includeSherpaRuntime) {
+        implementation("io.github.k2-fsa:sherpa-onnx-android:1.14.0")
+    } else {
+        logger.lifecycle("[SherpaBuiltin] includeSherpaRuntime=false，跳过 sherpa-onnx-android AAR 引入")
+    }
+    // 可选：本地 AAR 方案（比 maven 拉取更稳，避免版本对不齐时断网重试）
+    //   下载 https://github.com/k2-fsa/sherpa-onnx/releases 下的 sherpa-onnx-android-*.aar
+    //   重命名为 libs/sherpa-onnx-android.aar  →  改走下面这行：
+    // implementation(files("libs/sherpa-onnx-android.aar"))
 
     // Apache Commons Compress：SherpaOnnxModelRegistry 解压 tar.bz2 模型包
     implementation("org.apache.commons:commons-compress:1.27.1")

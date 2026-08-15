@@ -38,12 +38,17 @@ class SherpaSpeakerMappings @Inject constructor() {
         val byModel = when (installed.manifest.modelId) {
             FANCHEN_C_MODEL_ID -> fgoRoleToFanchenC[normalizedSpeaker]
             ZH_LL_MODEL_ID -> fgoRoleToZhLl[normalizedSpeaker]
-            KOKORO_MODEL_ID -> fgoRoleToKokoro[normalizedSpeaker]
-            PIPER_JA_AMAKUSA_MODEL_ID,
-            PIPER_JA_TSUKUYOMI_MODEL_ID -> 0   // 单音色 Piper
-            PIPER_JA_ONOMA_MODEL_ID,
-            VITS_JA_MASARU_MODEL_ID -> 0       // 单音色男声
-            VITS_JA_MEI_MODEL_ID -> 0          // 单音色女声
+            KOKORO_MODEL_ID_V10,
+            KOKORO_MODEL_ID_V11,
+            KOKORO_MODEL_ID_V11_INT8,
+            KOKORO_MODEL_ID_LEGACY -> fgoRoleToKokoro[normalizedSpeaker]
+            // 所有单 speaker 模型统一 0（Piper 中文 + 单角色 VITS）
+            PIPER_ZH_HUAYAN,
+            PIPER_ZH_CHAOWEN,
+            PIPER_ZH_XIAOYA,
+            SINGLE_KEQING,
+            SINGLE_BRONYA,
+            SINGLE_THERESA -> 0
             else -> null
         }
         if (byModel != null) {
@@ -66,12 +71,18 @@ class SherpaSpeakerMappings @Inject constructor() {
     companion object {
         private const val FANCHEN_C_MODEL_ID = "vits-zh-fanchen-C"
         private const val ZH_LL_MODEL_ID = "vits-zh-ll"
-        private const val KOKORO_MODEL_ID = "kokoro-82m-multi"
-        private const val PIPER_JA_AMAKUSA_MODEL_ID = "piper-ja_JP-amakusa-medium"
-        private const val PIPER_JA_TSUKUYOMI_MODEL_ID = "piper-ja_JP-tsukuyomi-low"
-        private const val PIPER_JA_ONOMA_MODEL_ID = "piper-ja_JP-onoma-medium"
-        private const val VITS_JA_MEI_MODEL_ID = "vits-ja-vits-mei"
-        private const val VITS_JA_MASARU_MODEL_ID = "vits-ja-vits-masaru"
+        private const val KOKORO_MODEL_ID_V10 = "kokoro-multi-v1_0"
+        private const val KOKORO_MODEL_ID_V11 = "kokoro-multi-v1_1"
+        private const val KOKORO_MODEL_ID_V11_INT8 = "kokoro-multi-v1_1-int8"
+        private const val KOKORO_MODEL_ID_LEGACY = "kokoro-82m-multi"
+        // 单 speaker Piper 中文系列
+        private const val PIPER_ZH_HUAYAN = "piper-zh_CN-huayan-medium"
+        private const val PIPER_ZH_CHAOWEN = "piper-zh_CN-chaowen-medium"
+        private const val PIPER_ZH_XIAOYA = "piper-zh_CN-xiao_ya-medium"
+        // 单角色 VITS 系列
+        private const val SINGLE_KEQING = "vits-zh-single-keqing"
+        private const val SINGLE_BRONYA = "vits-zh-single-bronya"
+        private const val SINGLE_THERESA = "vits-zh-single-theresa"
 
         /**
          * fanchen-C (187 speaker) → FGO 常见角色

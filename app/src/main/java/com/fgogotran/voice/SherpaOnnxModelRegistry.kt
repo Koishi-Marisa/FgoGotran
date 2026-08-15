@@ -51,7 +51,7 @@ class SherpaOnnxModelRegistry @Inject constructor(
     // 内置推荐模型清单（可按需扩展，社区模型由用户导入文件实现）
     // ==================================================================
     fun builtinCatalog(): List<SherpaOnnxModelManifest> = listOf(
-        // 中文：187 说话人（Fanchen-C）—— 方案A 首选，映射最全
+        // ===== 中文多 speaker（方案 A 首选）=====
         SherpaOnnxModelManifest(
             modelId = "vits-zh-fanchen-C",
             displayName = "中文超多音色 (fanchen-C · 187人)",
@@ -60,26 +60,108 @@ class SherpaOnnxModelRegistry @Inject constructor(
             speakerCount = 187,
             sampleRate = 16000,
             downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-zh-hf-fanchen-C.tar.bz2",
-            archiveSizeBytes = 116L * 1024 * 1024,
+            archiveSizeBytes = 114L * 1024 * 1024,
             unpackedSizeBytes = 240L * 1024 * 1024,
             sha256 = "",
-            notes = "社区贡献，187 种男女老少音色；方案 A 的推荐首选，自动映射 60+ FGO 角色"
+            notes = "社区贡献，187 种男女老少音色；方案 A 首选，内置 60+ FGO 角色映射"
         ),
-        // 中文：5 说话人（推荐，小体积，稳定）
         SherpaOnnxModelManifest(
             modelId = "vits-zh-ll",
-            displayName = "中文多音色 (zh-ll · 5人)",
+            displayName = "中文多音色 (zh-ll · 5人 · 官方推荐)",
             modelType = SherpaModelType.VITS_PLAIN,
             language = "zh",
             speakerCount = 5,
             sampleRate = 16000,
             downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-vits-zh-ll.tar.bz2",
-            archiveSizeBytes = 115L * 1024 * 1024,
+            archiveSizeBytes = 113L * 1024 * 1024,
             unpackedSizeBytes = 230L * 1024 * 1024,
             sha256 = "",
-            notes = "官方推荐中文模型，5 种音色，体积小 ~115MB；自带 FGO 常见角色映射"
+            notes = "Sherpa 官方推荐中文模型，5 种音色稳定，约 113MB；默认内置"
         ),
-        // 中英混合：MeloTTS
+
+        // ===== 中文单 speaker（Piper 社区，体积更小）=====
+        SherpaOnnxModelManifest(
+            modelId = "piper-zh_CN-huayan-medium",
+            displayName = "中文女声 (Piper · 华研)",
+            modelType = SherpaModelType.PIPER_VITS,
+            language = "zh",
+            speakerCount = 1,
+            sampleRate = 22050,
+            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-zh_CN-huayan-medium.tar.bz2",
+            archiveSizeBytes = 64L * 1024 * 1024,
+            unpackedSizeBytes = 140L * 1024 * 1024,
+            sha256 = "",
+            notes = "Piper 中文女声，约 64MB（含 espeak-ng-data，开箱即用）"
+        ),
+        SherpaOnnxModelManifest(
+            modelId = "piper-zh_CN-chaowen-medium",
+            displayName = "中文男声 (Piper · 超稳)",
+            modelType = SherpaModelType.PIPER_VITS,
+            language = "zh",
+            speakerCount = 1,
+            sampleRate = 22050,
+            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-zh_CN-chaowen-medium.tar.bz2",
+            archiveSizeBytes = 58L * 1024 * 1024,
+            unpackedSizeBytes = 130L * 1024 * 1024,
+            sha256 = "",
+            notes = "Piper 中文男声，约 58MB"
+        ),
+        SherpaOnnxModelManifest(
+            modelId = "piper-zh_CN-xiao_ya-medium",
+            displayName = "中文少女声 (Piper · 小雅)",
+            modelType = SherpaModelType.PIPER_VITS,
+            language = "zh",
+            speakerCount = 1,
+            sampleRate = 22050,
+            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-zh_CN-xiao_ya-medium.tar.bz2",
+            archiveSizeBytes = 58L * 1024 * 1024,
+            unpackedSizeBytes = 130L * 1024 * 1024,
+            sha256 = "",
+            notes = "Piper 中文少女/萝莉音色，约 58MB"
+        ),
+
+        // ===== 中文单角色 VITS（社区微调，音色 1:1 对应二次元角色）=====
+        SherpaOnnxModelManifest(
+            modelId = "vits-zh-single-keqing",
+            displayName = "单角色女声 (刻晴音色)",
+            modelType = SherpaModelType.VITS_PLAIN,
+            language = "zh",
+            speakerCount = 1,
+            sampleRate = 22050,
+            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-zh-hf-keqing.tar.bz2",
+            archiveSizeBytes = 115L * 1024 * 1024,
+            unpackedSizeBytes = 240L * 1024 * 1024,
+            sha256 = "",
+            notes = "单角色：刻晴风格女声（社区微调，适合高冷系 Saber/凛 类气质）"
+        ),
+        SherpaOnnxModelManifest(
+            modelId = "vits-zh-single-bronya",
+            displayName = "单角色女声 (布洛妮娅音色)",
+            modelType = SherpaModelType.VITS_PLAIN,
+            language = "zh",
+            speakerCount = 1,
+            sampleRate = 22050,
+            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-zh-hf-bronya.tar.bz2",
+            archiveSizeBytes = 115L * 1024 * 1024,
+            unpackedSizeBytes = 240L * 1024 * 1024,
+            sha256 = "",
+            notes = "单角色：布洛妮娅风格女声（冷淡/三无声线，适合童谣/AI系角色）"
+        ),
+        SherpaOnnxModelManifest(
+            modelId = "vits-zh-single-theresa",
+            displayName = "单角色少女声 (德丽莎音色)",
+            modelType = SherpaModelType.VITS_PLAIN,
+            language = "zh",
+            speakerCount = 1,
+            sampleRate = 22050,
+            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-zh-hf-theresa.tar.bz2",
+            archiveSizeBytes = 115L * 1024 * 1024,
+            unpackedSizeBytes = 240L * 1024 * 1024,
+            sha256 = "",
+            notes = "单角色：德丽莎风格少女声（幼齿/萝莉声线，适合幼贞、伊莉雅）"
+        ),
+
+        // ===== 中英混合 MeloTTS =====
         SherpaOnnxModelManifest(
             modelId = "melo-tts-zh_en",
             displayName = "中英混合 (MeloTTS)",
@@ -88,100 +170,169 @@ class SherpaOnnxModelRegistry @Inject constructor(
             speakerCount = 1,
             sampleRate = 44100,
             downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-melo-tts-zh_en.tar.bz2",
-            archiveSizeBytes = 163L * 1024 * 1024,
+            archiveSizeBytes = 159L * 1024 * 1024,
             unpackedSizeBytes = 350L * 1024 * 1024,
             sha256 = "",
-            notes = "中英混读效果好，质量高，单音色"
+            notes = "中英混读自然，Master 台词夹杂术语/外来语也能读顺"
         ),
-        // Kokoro-82M：多语言，质量顶级
+
+        // ===== Kokoro-82M：多语言高音质（FP32 / INT8 两档）=====
         SherpaOnnxModelManifest(
-            modelId = "kokoro-82m-multi",
-            displayName = "多语言高音质 (Kokoro-82M · v1.0)",
+            modelId = "kokoro-multi-v1_1",
+            displayName = "多语言高音质 (Kokoro-82M v1.1 · FP32)",
+            modelType = SherpaModelType.KOKORO_82M,
+            language = "multi",
+            speakerCount = 100,
+            sampleRate = 24000,
+            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_1.tar.bz2",
+            archiveSizeBytes = 348L * 1024 * 1024,
+            unpackedSizeBytes = 850L * 1024 * 1024,
+            sha256 = "",
+            notes = "Kokoro 官方 v1.1 FP32，50+ 语言 100 音色，质量接近商业 TTS；体积大（~348MB），高端机推荐"
+        ),
+        SherpaOnnxModelManifest(
+            modelId = "kokoro-multi-v1_1-int8",
+            displayName = "多语言高音质 (Kokoro-82M v1.1 · INT8 量化)",
+            modelType = SherpaModelType.KOKORO_82M,
+            language = "multi",
+            speakerCount = 100,
+            sampleRate = 24000,
+            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_1.tar.bz2",
+            archiveSizeBytes = 140L * 1024 * 1024,
+            unpackedSizeBytes = 400L * 1024 * 1024,
+            sha256 = "",
+            notes = "Kokoro v1.1 INT8 量化版，体积仅 140MB，质量略损于 FP32；中端机推荐"
+        ),
+        SherpaOnnxModelManifest(
+            modelId = "kokoro-multi-v1_0",
+            displayName = "多语言高音质 (Kokoro-82M v1.0 · FP32)",
             modelType = SherpaModelType.KOKORO_82M,
             language = "multi",
             speakerCount = 90,
             sampleRate = 24000,
-            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-v1.0-onnx.tar.bz2",
-            archiveSizeBytes = 500L * 1024 * 1024,
-            unpackedSizeBytes = 900L * 1024 * 1024,
+            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2",
+            archiveSizeBytes = 333L * 1024 * 1024,
+            unpackedSizeBytes = 800L * 1024 * 1024,
             sha256 = "",
-            notes = "支持中英日韩 50+ 语言，质量接近商业服务；模型较大（~500MB）"
-        ),
-        // 日文 Piper 女声（amakusa = Saber/总司类）
-        SherpaOnnxModelManifest(
-            modelId = "piper-ja_JP-amakusa-medium",
-            displayName = "日文女声 (Piper · amakusa)",
-            modelType = SherpaModelType.PIPER_VITS,
-            language = "ja",
-            speakerCount = 1,
-            sampleRate = 22050,
-            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-ja_JP-amakusa-medium.tar.bz2",
-            archiveSizeBytes = 60L * 1024 * 1024,
-            unpackedSizeBytes = 140L * 1024 * 1024,
-            sha256 = "",
-            notes = "Sherpa 官方打包好的 Piper 日语温柔女声，可直接使用"
-        ),
-        // 日文 Piper 男声（onoma = 闪闪/库丘林类）
-        SherpaOnnxModelManifest(
-            modelId = "piper-ja_JP-onoma-medium",
-            displayName = "日文男声 (Piper · onoma)",
-            modelType = SherpaModelType.PIPER_VITS,
-            language = "ja",
-            speakerCount = 1,
-            sampleRate = 22050,
-            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-ja_JP-onoma-medium.tar.bz2",
-            archiveSizeBytes = 60L * 1024 * 1024,
-            unpackedSizeBytes = 140L * 1024 * 1024,
-            sha256 = "",
-            notes = "Sherpa 官方打包好的 Piper 日语男声"
-        ),
-        // 日文 Piper 萝莉音（tsukuyomi = 伊莉雅/幼贞）
-        SherpaOnnxModelManifest(
-            modelId = "piper-ja_JP-tsukuyomi-low",
-            displayName = "日文萝莉 (Piper · tsukuyomi)",
-            modelType = SherpaModelType.PIPER_VITS,
-            language = "ja",
-            speakerCount = 1,
-            sampleRate = 22050,
-            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-ja_JP-tsukuyomi-low.tar.bz2",
-            archiveSizeBytes = 20L * 1024 * 1024,
-            unpackedSizeBytes = 50L * 1024 * 1024,
-            sha256 = "",
-            notes = "Piper 日语萝莉/少女音色，体积最小 ~20MB"
-        ),
-        // 日文 VITS Mei（御姐音，凛/信长）
-        SherpaOnnxModelManifest(
-            modelId = "vits-ja-vits-mei",
-            displayName = "日文御姐 (VITS · Mei)",
-            modelType = SherpaModelType.VITS_PLAIN,
-            language = "ja",
-            speakerCount = 1,
-            sampleRate = 22050,
-            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-ja-vits-mei.tar.bz2",
-            archiveSizeBytes = 80L * 1024 * 1024,
-            unpackedSizeBytes = 180L * 1024 * 1024,
-            sha256 = "",
-            notes = "日语御姐系女声"
-        ),
-        // 日文 VITS Masaru（青年男声，卫宫/拉二）
-        SherpaOnnxModelManifest(
-            modelId = "vits-ja-vits-masaru",
-            displayName = "日文男声 (VITS · Masaru)",
-            modelType = SherpaModelType.VITS_PLAIN,
-            language = "ja",
-            speakerCount = 1,
-            sampleRate = 22050,
-            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-ja-vits-masaru.tar.bz2",
-            archiveSizeBytes = 80L * 1024 * 1024,
-            unpackedSizeBytes = 180L * 1024 * 1024,
-            sha256 = "",
-            notes = "日语青年系男声"
+            notes = "Kokoro v1.0 老版，兼容性更好"
         )
     )
 
     // ==================================================================
     // 安装与下载
     // ==================================================================
+
+    /**
+     * 启动时执行：若 APK assets 里携带了 `sherpa_builtin_models/<id>/` 的内置模型，
+     * 则把其内容异步复制到应用私有 filesDir（等同 installFromArchive 的效果）。
+     * 幂等：每个 modelId 有自己的 `.asset-installed` 标记文件，已完成则 O(1) 跳过。
+     */
+    suspend fun ensureAssetsModelsInstalled(): Unit = withContext(Dispatchers.IO) {
+        val root = "sherpa_builtin_models"
+        val topList = runCatching { context.assets.list(root) }.getOrNull().orEmpty()
+            .filter { it.isNotBlank() }
+        if (topList.isEmpty()) return@withContext
+
+        val catalog = builtinCatalog().associateBy { it.modelId }
+        for (modelId in topList) {
+            val target = installDirFor(modelId)
+            val sentinel = File(target, ".asset-installed")
+            if (sentinel.isFile) continue
+
+            val manifest = catalog[modelId]
+                ?: runCatching {
+                    // 内置但不在 catalog 的模型 → 按目录条目做一个最小 manifest 推断
+                    guessMinimalManifest(modelId, "$root/$modelId")
+                }.getOrNull()
+            if (manifest == null) continue
+
+            FgoLogger.info(tag, "从 APK assets 静默安装内置模型 $modelId")
+            target.deleteRecursively()
+            target.mkdirs()
+            try {
+                copyAssetTree(srcDir = "$root/$modelId", targetDir = target)
+                sentinel.writeText("ok")
+                persistInstalled(manifest)
+                FgoLogger.info(tag, "内置模型安装完成: $modelId (${target.listFiles()?.size ?: 0} entries)")
+            } catch (t: Throwable) {
+                runCatching { target.deleteRecursively() }
+                FgoLogger.warn(tag, "内置模型安装失败 $modelId: ${t.message}")
+                diagnosticEventStore.recordError("内置 TTS 模型安装失败：$modelId", t)
+            }
+        }
+    }
+
+    private fun guessMinimalManifest(modelId: String, assetPrefix: String): SherpaOnnxModelManifest? {
+        val entries = context.assets.list(assetPrefix).orEmpty().toList()
+        val modelType = when {
+            entries.any { it == "voices.bin" } -> SherpaModelType.KOKORO_82M
+            entries.any { it == "espeak-ng-data" || (modelId.startsWith("piper-")) } -> SherpaModelType.PIPER_VITS
+            else -> SherpaModelType.VITS_PLAIN
+        }
+        val lang = when {
+            modelId.contains("zh") -> "zh"
+            modelId.contains("ja") -> "ja"
+            modelId.startsWith("kokoro") -> "multi"
+            else -> "unknown"
+        }
+        return SherpaOnnxModelManifest(
+            modelId = modelId,
+            displayName = "内置模型 · $modelId",
+            modelType = modelType,
+            language = lang,
+            speakerCount = if (modelId == "vits-zh-fanchen-C") 187 else if (modelId == "vits-zh-ll") 5 else 1,
+            sampleRate = 22050,
+            downloadUrl = "",
+            archiveSizeBytes = 0L,
+            unpackedSizeBytes = 0L,
+            sha256 = "",
+            notes = "APK 内置本地模型，启动即装"
+        )
+    }
+
+    private fun copyAssetTree(srcDir: String, targetDir: File) {
+        val stack = ArrayDeque<Pair<String, File>>()
+        stack.addLast(srcDir to targetDir)
+        val buf = ByteArray(64 * 1024)
+        while (stack.isNotEmpty()) {
+            val (src, dst) = stack.removeLast()
+            val entries = context.assets.list(src).orEmpty()
+            if (entries.isEmpty()) {
+                // 叶子：是文件
+                dst.parentFile?.mkdirs()
+                context.assets.open(src).use { input ->
+                    java.io.FileOutputStream(dst).use { out ->
+                        var n: Int
+                        while (input.read(buf).also { n = it } != -1) out.write(buf, 0, n)
+                    }
+                }
+            } else {
+                // 目录：要么内容是子目录名，要么是文件名（list 非空）
+                // 进一步判断是否真的是目录：尝试 list("src/entry") 是否成功且非空；若抛异常 IOException 则是文件
+                for (entry in entries) {
+                    val childSrc = if (src.isEmpty()) entry else "$src/$entry"
+                    val childDst = File(dst, entry)
+                    val isDir = try {
+                        val sub = context.assets.list(childSrc)
+                        sub != null && sub.isNotEmpty()
+                    } catch (_: java.io.FileNotFoundException) { false }
+                    catch (_: Exception) { false }
+                    if (isDir) {
+                        childDst.mkdirs()
+                        stack.addLast(childSrc to childDst)
+                    } else {
+                        childDst.parentFile?.mkdirs()
+                        context.assets.open(childSrc).use { input ->
+                            java.io.FileOutputStream(childDst).use { out ->
+                                var n: Int
+                                while (input.read(buf).also { n = it } != -1) out.write(buf, 0, n)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     /** 判断某模型是否已安装 */
     fun isInstalled(modelId: String): Boolean = installDirFor(modelId).isDirectory
