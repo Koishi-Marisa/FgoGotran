@@ -249,7 +249,7 @@ dependencies {
     //   1) 仅关闭 JNI 引擎，仍保留 Provider 抽象：-Pfgogotran.includeSherpaRuntime=false
     //   2) 仅不内置模型（保留引擎，支持手动下载）：   -Pfgogotran.builtinTtsModel=none
     if (includeSherpaRuntime) {
-        implementation("com.github.k2-fsa.sherpa-onnx:sherpa-onnx-android:1.13.5")
+        implementation("com.github.k2-fsa:sherpa-onnx:1.13.5")
     } else {
         logger.lifecycle("[SherpaBuiltin] includeSherpaRuntime=false，跳过 sherpa-onnx-android AAR 引入")
     }
