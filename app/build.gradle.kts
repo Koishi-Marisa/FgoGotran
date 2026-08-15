@@ -15,21 +15,53 @@ android {
         applicationId = "com.fgogotran"
         minSdk = 30
         targetSdk = 34
-        versionCode = 6
-        versionName = "2.1.0"
+        versionCode = 7
+        versionName = "2.2.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
         }
     }
 
+    // ===== CI 签名策略 =====
+    // 优先级：
+    //  1. 环境变量 RELEASE_KEYSTORE_BASE64（GitHub Secrets 提供，自动解码写入临时文件）
+    //  2. 环境变量 ANDROID_SIGNING_STORE_FILE 本地路径
+    //  3. 否则 release 仍使用 debug 证书（保证 CI 总能出包，不会因为缺 secret 挂掉）
+    signingConfigs {
+        val envStoreFile = System.getenv("ANDROID_SIGNING_STORE_FILE").orEmpty()
+        val envStorePass = System.getenv("ANDROID_SIGNING_STORE_PASSWORD").orEmpty()
+        val envKeyAlias = System.getenv("ANDROID_SIGNING_KEY_ALIAS").orEmpty()
+        val envKeyPass = System.getenv("ANDROID_SIGNING_KEY_PASSWORD").orEmpty()
+
+        create("releaseFromEnv") {
+            isV1SigningEnabled = true
+            isV2SigningEnabled = true
+            storeFile = if (envStoreFile.isNotBlank()) file(envStoreFile) else null
+            storePassword = envStorePass.ifBlank { "android" }
+            keyAlias = envKeyAlias.ifBlank { "androiddebugkey" }
+            keyPassword = envKeyPass.ifBlank { "android" }
+        }
+    }
+
     buildTypes {
+        debug {
+            isMinifyEnabled = false
+        }
         release {
             isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // 若用户提供了合法签名文件就用它，否则 fallback 到 debug 证书，保证 release 构建永远成功。
+            val releaseSigning = signingConfigs.getByName("releaseFromEnv")
+            signingConfig = if (releaseSigning.storeFile?.exists() == true) {
+                releaseSigning
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 

@@ -42,7 +42,8 @@ class SherpaOnnxTtsProvider @Inject constructor(
     @ApplicationContext private val context: Context,
     private val registry: SherpaOnnxModelRegistry,
     private val settingsRepository: SettingsRepository,
-    private val diagnosticEventStore: DiagnosticEventStore
+    private val diagnosticEventStore: DiagnosticEventStore,
+    private val speakerMappings: SherpaSpeakerMappings
 ) : TtsProvider {
 
     override val providerId: String = "sherpa_onnx"
@@ -169,8 +170,15 @@ class SherpaOnnxTtsProvider @Inject constructor(
                 ?: throw IllegalStateException("没有已安装的本地 TTS 模型，请到「语音设置」中下载")
             ensureModelLoaded(installed)
 
-            // 说话人 id：优先从 profile.style（约定 "sid:17"）取，否则用默认
-            val sid = resolveSpeakerId(request.profile, installed)
+            // 说话人 id：
+            //   1. 优先用 profile.style/profile.description 中显式写的 "sid:xxx"；
+            //   2. 否则查「FGO 常见角色 × 模型预设表」（方案 A）；
+            //   3. 最终按"角色名+性别"稳定 hash 保证同角色音色不跳变。
+            val sid = speakerMappings.resolveSpeakerId(
+                speakerName = request.speakerName,
+                profile = request.profile,
+                installed = installed
+            )
             // 速度：profile.rate 形如 "15%" -> 换算为 speed factor
             val speed = resolveSpeed(request)
 
@@ -241,12 +249,6 @@ class SherpaOnnxTtsProvider @Inject constructor(
         activeModelHandle = handle
         activeModelId = installed.manifest.modelId
         activeSampleRate = installed.manifest.sampleRate
-    }
-
-    private fun resolveSpeakerId(profile: VoiceProfile, installed: InstalledSherpaModel): Int {
-        val sidStyle = profile.style.takeIf { it.startsWith("sid:") }?.substring(4)?.toIntOrNull()
-        if (sidStyle != null) return sidStyle.coerceIn(0, (installed.manifest.speakerCount - 1).coerceAtLeast(0))
-        return installed.defaultSpeakerId
     }
 
     private fun resolveSpeed(request: VoiceSynthesisRequest): Float {

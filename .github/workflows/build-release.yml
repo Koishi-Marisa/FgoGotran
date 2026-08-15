@@ -1,0 +1,157 @@
+name: Build APK & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "创建的 Release Tag（留空则用今天日期）"
+        required: false
+        default: ""
+      prerelease:
+        description: "标记为 Pre-release"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build APK (Android)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-encryption-key: "${{ runner.os }}-gradle-enc"
+          gradle-home-cache-cleanup: true
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x ./gradlew
+
+      # ====== 签名：如果 GitHub Secrets 里提供了 base64 的 release keystore ======
+      - name: Decode release keystore (if RELEASE_KEYSTORE_BASE64 is set)
+        env:
+          KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          set -e
+          if [ -n "$KEYSTORE_B64" ]; then
+            mkdir -p "$RUNNER_TEMP"
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            {
+              echo "ANDROID_SIGNING_STORE_FILE=$RUNNER_TEMP/release.keystore"
+              echo "ANDROID_SIGNING_STORE_PASSWORD=${{ secrets.RELEASE_KEYSTORE_PASSWORD || 'android' }}"
+              echo "ANDROID_SIGNING_KEY_ALIAS=${{ secrets.RELEASE_KEY_ALIAS || 'androiddebugkey' }}"
+              echo "ANDROID_SIGNING_KEY_PASSWORD=${{ secrets.RELEASE_KEY_PASSWORD || secrets.RELEASE_KEYSTORE_PASSWORD || 'android' }}"
+            } >> "$GITHUB_ENV"
+            echo "Wrote release keystore: $RUNNER_TEMP/release.keystore ($(wc -c < "$RUNNER_TEMP/release.keystore") bytes)"
+          else
+            echo "No keystore secret provided; will fall back to debug signing (release APK will still build)."
+          fi
+
+      - name: Build Debug + Release APKs
+        run: |
+          ./gradlew --stacktrace --no-daemon assembleDebug assembleRelease
+
+      - name: Locate build outputs
+        id: outputs
+        run: |
+          set -e
+          DEBUG_APK=$(ls app/build/outputs/apk/debug/*.apk | head -n1)
+          RELEASE_APK=$(ls app/build/outputs/apk/release/*.apk | head -n1)
+          echo "debug_apk=$DEBUG_APK" >> "$GITHUB_OUTPUT"
+          echo "release_apk=$RELEASE_APK" >> "$GITHUB_OUTPUT"
+          ls -la app/build/outputs/apk/debug/ app/build/outputs/apk/release/ || true
+          [ -n "$DEBUG_APK" ]
+          [ -n "$RELEASE_APK" ]
+
+      - name: Compute SHA256
+        id: sha
+        run: |
+          set -e
+          DEBUG_SHA=$(sha256sum "${{ steps.outputs.outputs.debug_apk }}" | awk '{print $1}')
+          RELEASE_SHA=$(sha256sum "${{ steps.outputs.outputs.release_apk }}" | awk '{print $1}')
+          echo "debug_sha=$DEBUG_SHA" >> "$GITHUB_OUTPUT"
+          echo "release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+          {
+            echo "## APK 校验和"
+            echo ""
+            echo "| 文件 | SHA256 |"
+            echo "| --- | --- |"
+            echo "| fgogotran-debug.apk | \`$DEBUG_SHA\` |"
+            echo "| fgogotran-release.apk | \`$RELEASE_SHA\` |"
+          } > "$RUNNER_TEMP/checksums.md"
+          cat "$RUNNER_TEMP/checksums.md"
+
+      # ====== workflow_dispatch 时先把 HEAD 打一个 tag ======
+      - name: Derive release tag for manual run
+        if: github.event_name == 'workflow_dispatch'
+        id: tag
+        run: |
+          set -e
+          TAG="${{ github.event.inputs.tag_name }}"
+          if [ -z "$TAG" ]; then
+            TAG="v$(date +%Y.%m.%d)-preview"
+          fi
+          # 如果 tag 已存在就再追加时间戳
+          if git show-ref --verify --quiet "refs/tags/$TAG"; then
+            TAG="$TAG-$(date +%H%M%S)"
+          fi
+          git tag "$TAG" HEAD
+          git push origin "$TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve effective release tag
+        id: ref
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ steps.tag.outputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ====== 上传 APK 到 Release ======
+      - name: Create GitHub Release & upload APKs
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ref.outputs.tag }}
+          name: FgoGotran ${{ steps.ref.outputs.tag }}
+          prerelease: >-
+            ${{
+              (github.event_name == 'workflow_dispatch' && github.event.inputs.prerelease == 'true') ||
+              startsWith(steps.ref.outputs.tag, 'v0.') ||
+              contains(steps.ref.outputs.tag, '-preview')
+            }}
+          body_path: ${{ runner.temp }}/checksums.md
+          files: |
+            ${{ steps.outputs.outputs.debug_apk }}
+            ${{ steps.outputs.outputs.release_apk }}
+            app/build/outputs/mapping/release/mapping.txt
+
+      # ====== 额外上传为 workflow artifact 兜底 ======
+      - name: Upload APKs as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: FgoGotran-APKs-${{ steps.ref.outputs.tag }}
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/mapping/release/mapping.txt
+          retention-days: 90

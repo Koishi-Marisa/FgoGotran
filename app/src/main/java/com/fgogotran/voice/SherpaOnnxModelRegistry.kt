@@ -51,6 +51,20 @@ class SherpaOnnxModelRegistry @Inject constructor(
     // 内置推荐模型清单（可按需扩展，社区模型由用户导入文件实现）
     // ==================================================================
     fun builtinCatalog(): List<SherpaOnnxModelManifest> = listOf(
+        // 中文：187 说话人（Fanchen-C）—— 方案A 首选，映射最全
+        SherpaOnnxModelManifest(
+            modelId = "vits-zh-fanchen-C",
+            displayName = "中文超多音色 (fanchen-C · 187人)",
+            modelType = SherpaModelType.VITS_PLAIN,
+            language = "zh",
+            speakerCount = 187,
+            sampleRate = 16000,
+            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-zh-hf-fanchen-C.tar.bz2",
+            archiveSizeBytes = 116L * 1024 * 1024,
+            unpackedSizeBytes = 240L * 1024 * 1024,
+            sha256 = "",
+            notes = "社区贡献，187 种男女老少音色；方案 A 的推荐首选，自动映射 60+ FGO 角色"
+        ),
         // 中文：5 说话人（推荐，小体积，稳定）
         SherpaOnnxModelManifest(
             modelId = "vits-zh-ll",
@@ -63,21 +77,7 @@ class SherpaOnnxModelRegistry @Inject constructor(
             archiveSizeBytes = 115L * 1024 * 1024,
             unpackedSizeBytes = 230L * 1024 * 1024,
             sha256 = "",
-            notes = "官方推荐中文模型，5 种音色，模型体积 ~115MB"
-        ),
-        // 中文：187 说话人（Fanchen-C）
-        SherpaOnnxModelManifest(
-            modelId = "vits-zh-fanchen-C",
-            displayName = "中文超多音色 (fanchen-C · 187人)",
-            modelType = SherpaModelType.VITS_PLAIN,
-            language = "zh",
-            speakerCount = 187,
-            sampleRate = 16000,
-            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-zh-hf-fanchen-C.tar.bz2",
-            archiveSizeBytes = 116L * 1024 * 1024,
-            unpackedSizeBytes = 240L * 1024 * 1024,
-            sha256 = "",
-            notes = "社区贡献，187 种男女混合音色"
+            notes = "官方推荐中文模型，5 种音色，体积小 ~115MB；自带 FGO 常见角色映射"
         ),
         // 中英混合：MeloTTS
         SherpaOnnxModelManifest(
@@ -96,7 +96,7 @@ class SherpaOnnxModelRegistry @Inject constructor(
         // Kokoro-82M：多语言，质量顶级
         SherpaOnnxModelManifest(
             modelId = "kokoro-82m-multi",
-            displayName = "多语言高音质 (Kokoro-82M)",
+            displayName = "多语言高音质 (Kokoro-82M · v1.0)",
             modelType = SherpaModelType.KOKORO_82M,
             language = "multi",
             speakerCount = 90,
@@ -105,21 +105,77 @@ class SherpaOnnxModelRegistry @Inject constructor(
             archiveSizeBytes = 500L * 1024 * 1024,
             unpackedSizeBytes = 900L * 1024 * 1024,
             sha256 = "",
-            notes = "支持中英日韩等 50+ 语言，质量接近商业服务；模型较大（~500MB）"
+            notes = "支持中英日韩 50+ 语言，质量接近商业服务；模型较大（~500MB）"
         ),
-        // 日文 Piper
+        // 日文 Piper 女声（amakusa = Saber/总司类）
         SherpaOnnxModelManifest(
             modelId = "piper-ja_JP-amakusa-medium",
-            displayName = "日文女声 (Piper amakusa-medium)",
+            displayName = "日文女声 (Piper · amakusa)",
             modelType = SherpaModelType.PIPER_VITS,
             language = "ja",
             speakerCount = 1,
             sampleRate = 22050,
-            downloadUrl = "https://huggingface.co/rhasspy/piper-voices/resolve/main/ja/ja_JP/amakusa/medium/ja_JP-amakusa-medium.onnx",
-            archiveSizeBytes = 70L * 1024 * 1024,
-            unpackedSizeBytes = 150L * 1024 * 1024,
+            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-ja_JP-amakusa-medium.tar.bz2",
+            archiveSizeBytes = 60L * 1024 * 1024,
+            unpackedSizeBytes = 140L * 1024 * 1024,
             sha256 = "",
-            notes = "Piper 社区日语女声，需要先给 onnx 添加 metadata（见 Sherpa 官方文档）"
+            notes = "Sherpa 官方打包好的 Piper 日语温柔女声，可直接使用"
+        ),
+        // 日文 Piper 男声（onoma = 闪闪/库丘林类）
+        SherpaOnnxModelManifest(
+            modelId = "piper-ja_JP-onoma-medium",
+            displayName = "日文男声 (Piper · onoma)",
+            modelType = SherpaModelType.PIPER_VITS,
+            language = "ja",
+            speakerCount = 1,
+            sampleRate = 22050,
+            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-ja_JP-onoma-medium.tar.bz2",
+            archiveSizeBytes = 60L * 1024 * 1024,
+            unpackedSizeBytes = 140L * 1024 * 1024,
+            sha256 = "",
+            notes = "Sherpa 官方打包好的 Piper 日语男声"
+        ),
+        // 日文 Piper 萝莉音（tsukuyomi = 伊莉雅/幼贞）
+        SherpaOnnxModelManifest(
+            modelId = "piper-ja_JP-tsukuyomi-low",
+            displayName = "日文萝莉 (Piper · tsukuyomi)",
+            modelType = SherpaModelType.PIPER_VITS,
+            language = "ja",
+            speakerCount = 1,
+            sampleRate = 22050,
+            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-ja_JP-tsukuyomi-low.tar.bz2",
+            archiveSizeBytes = 20L * 1024 * 1024,
+            unpackedSizeBytes = 50L * 1024 * 1024,
+            sha256 = "",
+            notes = "Piper 日语萝莉/少女音色，体积最小 ~20MB"
+        ),
+        // 日文 VITS Mei（御姐音，凛/信长）
+        SherpaOnnxModelManifest(
+            modelId = "vits-ja-vits-mei",
+            displayName = "日文御姐 (VITS · Mei)",
+            modelType = SherpaModelType.VITS_PLAIN,
+            language = "ja",
+            speakerCount = 1,
+            sampleRate = 22050,
+            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-ja-vits-mei.tar.bz2",
+            archiveSizeBytes = 80L * 1024 * 1024,
+            unpackedSizeBytes = 180L * 1024 * 1024,
+            sha256 = "",
+            notes = "日语御姐系女声"
+        ),
+        // 日文 VITS Masaru（青年男声，卫宫/拉二）
+        SherpaOnnxModelManifest(
+            modelId = "vits-ja-vits-masaru",
+            displayName = "日文男声 (VITS · Masaru)",
+            modelType = SherpaModelType.VITS_PLAIN,
+            language = "ja",
+            speakerCount = 1,
+            sampleRate = 22050,
+            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-ja-vits-masaru.tar.bz2",
+            archiveSizeBytes = 80L * 1024 * 1024,
+            unpackedSizeBytes = 180L * 1024 * 1024,
+            sha256 = "",
+            notes = "日语青年系男声"
         )
     )
 
@@ -213,11 +269,18 @@ class SherpaOnnxModelRegistry @Inject constructor(
         }
     }
 
-    /** 返回默认选中的模型（按优先级：中文已安装 > 任意已安装） */
+    /**
+     * 返回默认选中的模型（按方案 A 的优先级排序）：
+     *   1. vits-zh-fanchen-C（187 种音色，角色映射最全）
+     *   2. 其它中文（zh*）
+     *   3. 任意已安装
+     */
     fun preferredInstalled(): InstalledSherpaModel? {
         val installed = listInstalled()
-        return installed.firstOrNull { it.manifest.language.startsWith("zh") }
-            ?: installed.firstOrNull()
+        if (installed.isEmpty()) return null
+        return installed.firstOrNull { it.manifest.modelId == "vits-zh-fanchen-C" }
+            ?: installed.firstOrNull { it.manifest.language.startsWith("zh") }
+            ?: installed.first()
     }
 
     // ==================================================================
