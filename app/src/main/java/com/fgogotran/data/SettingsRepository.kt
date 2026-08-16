@@ -476,6 +476,8 @@ class SettingsRepository @Inject constructor(
         prefs[KEY_SHERPA_SELECTED_MODEL].orEmpty()
     }
 
+    suspend fun getSherpaSelectedModel(): String = sherpaSelectedModel.first()
+
     /** Currently selected Sherpa-ONNX speaker id within the selected model. */
     val sherpaSelectedSpeaker: Flow<Int> = context.dataStore.data.map { prefs ->
         prefs[KEY_SHERPA_SELECTED_SPEAKER] ?: 0

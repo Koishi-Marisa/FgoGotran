@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -23,6 +24,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -53,10 +55,14 @@ import com.fgogotran.R
 import com.fgogotran.data.SettingsRepository
 import com.fgogotran.translation.Translator
 import com.fgogotran.translation.VoiceLineHint
+import com.fgogotran.util.FgoLogger
 import com.fgogotran.voice.AiVoiceService
+import com.fgogotran.voice.SherpaOnnxModelManifest
+import com.fgogotran.voice.SherpaOnnxModelRegistry
 import com.fgogotran.voice.TtsTestResult
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import java.util.Locale
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -65,6 +71,7 @@ fun VoiceSettingsScreen(
     settingsRepository: SettingsRepository,
     translator: Translator,
     aiVoiceService: AiVoiceService,
+    sherpaOnnxModelRegistry: SherpaOnnxModelRegistry,
     onBack: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -102,6 +109,14 @@ fun VoiceSettingsScreen(
     var azureSpeechTestIsError by remember { mutableStateOf(false) }
     var azureSpeechTesting by remember { mutableStateOf(false) }
 
+    // 本地 TTS 模型管理（下载 / 切换 / 卸载）
+    var selectedSherpaModelId by remember { mutableStateOf("") }
+    var installedSherpaModelIds by remember { mutableStateOf(setOf<String>()) }
+    var downloadingModelId by remember { mutableStateOf<String?>(null) }
+    var downloadProgress by remember { mutableStateOf(0) }
+    var modelMessage by remember { mutableStateOf("") }
+    var modelMessageIsError by remember { mutableStateOf(false) }
+
     val isAzureTtsProvider = ttsProvider == SettingsRepository.TTS_PROVIDER_AZURE
     val isSherpaTtsProvider = ttsProvider == SettingsRepository.TTS_PROVIDER_SHERPA_ONNX
 
@@ -117,9 +132,81 @@ fun VoiceSettingsScreen(
         ttsProvider = settingsRepository.ttsProvider.first()
         azureSpeechKey = settingsRepository.azureSpeechKey.first()
         azureSpeechRegion = settingsRepository.azureSpeechRegion.first()
+        // 先确保 APK 内置模型已安装（幂等），再读取列表，UI 才能正确显示"已安装"
+        sherpaOnnxModelRegistry.ensureAssetsModelsInstalled()
+        selectedSherpaModelId = settingsRepository.sherpaSelectedModel.first().trim()
+        installedSherpaModelIds = sherpaOnnxModelRegistry.listInstalled()
+            .map { it.manifest.modelId }
+            .toSet()
         if (ttsProvider == SettingsRepository.TTS_PROVIDER_SHERPA_ONNX) {
             // 打开设置页就后台预热本地模型，提前隐藏首次加载耗时
             scope.launch { runCatching { aiVoiceService.warmUpCurrentProvider() } }
+        }
+    }
+
+    suspend fun refreshSherpaModelState() {
+        sherpaOnnxModelRegistry.ensureAssetsModelsInstalled()
+        installedSherpaModelIds = sherpaOnnxModelRegistry.listInstalled()
+            .map { it.manifest.modelId }
+            .toSet()
+    }
+
+    fun downloadSherpaModel(manifest: SherpaOnnxModelManifest) {
+        if (downloadingModelId != null) return
+        scope.launch {
+            downloadingModelId = manifest.modelId
+            downloadProgress = 0
+            modelMessage = ""
+            modelMessageIsError = false
+            try {
+                sherpaOnnxModelRegistry.downloadAndInstall(manifest) { percent, message ->
+                    downloadProgress = percent
+                    modelMessage = message
+                }
+                selectedSherpaModelId = manifest.modelId
+                refreshSherpaModelState()
+                modelMessage = "「${manifest.displayName}」下载并安装完成，已切换为当前模型"
+                modelMessageIsError = false
+                runCatching { aiVoiceService.warmUpCurrentProvider() }
+            } catch (e: Throwable) {
+                FgoLogger.warn("VoiceSettings", "本地模型下载失败 ${manifest.modelId}: ${e.message}", e)
+                modelMessageIsError = true
+                modelMessage = "下载失败：${e.message.orEmpty().take(96)}"
+            } finally {
+                downloadingModelId = null
+            }
+        }
+    }
+
+    fun selectSherpaModel(modelId: String) {
+        scope.launch {
+            settingsRepository.setSherpaSelectedModel(modelId)
+            selectedSherpaModelId = modelId
+            modelMessage = "已切换为当前模型"
+            modelMessageIsError = false
+            runCatching { aiVoiceService.warmUpCurrentProvider() }
+        }
+    }
+
+    fun uninstallSherpaModel(modelId: String) {
+        scope.launch {
+            runCatching { sherpaOnnxModelRegistry.uninstall(modelId) }
+                .onSuccess {
+                    refreshSherpaModelState()
+                    if (selectedSherpaModelId == modelId) {
+                        settingsRepository.setSherpaSelectedModel("")
+                        selectedSherpaModelId = ""
+                        modelMessage = "已卸载；将自动使用其余已安装模型"
+                    } else {
+                        modelMessage = "已卸载"
+                    }
+                    modelMessageIsError = false
+                    runCatching { aiVoiceService.warmUpCurrentProvider() }
+                }
+                .onFailure { e ->
+                    modelMessageIsError = true
+                    modelMessage = "卸载失败：${e.message.orEmpty().take(96)}"
+                }
         }
     }
 
@@ -238,6 +325,37 @@ fun VoiceSettingsScreen(
                         }
                     }
                 )
+            }
+
+            VoiceSettingsCard(
+                title = "本地 TTS 模型",
+                body = "在 App 内下载 / 切换本地合成模型（当前引擎为 Azure 时也可预先下载，切换到本地后生效）。下载完成后自动设为当前模型。",
+                iconRes = R.drawable.ic_settings_voice
+            ) {
+                if (modelMessage.isNotBlank()) {
+                    Text(
+                        modelMessage,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (modelMessageIsError) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        }
+                    )
+                }
+                sherpaOnnxModelRegistry.builtinCatalog().forEach { manifest ->
+                    LocalTtsModelRow(
+                        manifest = manifest,
+                        installed = manifest.modelId in installedSherpaModelIds,
+                        selected = manifest.modelId == selectedSherpaModelId,
+                        bundled = sherpaOnnxModelRegistry.isBundledInApk(manifest.modelId),
+                        downloading = manifest.modelId == downloadingModelId,
+                        progress = if (downloadingModelId == manifest.modelId) downloadProgress else 0,
+                        onDownload = { downloadSherpaModel(manifest) },
+                        onSelect = { selectSherpaModel(manifest.modelId) },
+                        onUninstall = { uninstallSherpaModel(manifest.modelId) }
+                    )
+                }
             }
 
             VoiceSettingsCard(
@@ -897,6 +1015,135 @@ private fun VoiceReadTextOption(
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (selected) 0.82f else 0.48f)
             )
         }
+    }
+}
+
+@Composable
+private fun LocalTtsModelRow(
+    manifest: SherpaOnnxModelManifest,
+    installed: Boolean,
+    selected: Boolean,
+    bundled: Boolean,
+    downloading: Boolean,
+    progress: Int,
+    onDownload: () -> Unit,
+    onSelect: () -> Unit,
+    onUninstall: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.small,
+        color = if (selected) {
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f)
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f)
+        }
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    manifest.displayName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.86f),
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                when {
+                    selected -> Text(
+                        "当前使用",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    installed -> Text(
+                        if (bundled) "内置 · 已安装" else "已安装",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                }
+            }
+            Text(
+                buildString {
+                    if (manifest.archiveSizeBytes > 0) append("${formatModelSize(manifest.archiveSizeBytes)} · ")
+                    append("${manifest.speakerCount} 音色")
+                    if (manifest.notes.isNotBlank()) append(" · ${manifest.notes}")
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f)
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            when {
+                downloading -> {
+                    Text(
+                        "下载中 $progress%",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    LinearProgressIndicator(
+                        progress = { progress / 100f },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                installed -> {
+                    if (bundled) {
+                        Button(
+                            onClick = onSelect,
+                            enabled = !selected,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(if (selected) "当前使用" else "使用此模型")
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = onUninstall,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("卸载")
+                            }
+                            Button(
+                                onClick = onSelect,
+                                enabled = !selected,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(if (selected) "当前使用" else "使用此模型")
+                            }
+                        }
+                    }
+                }
+                else -> {
+                    Button(
+                        onClick = onDownload,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            if (manifest.archiveSizeBytes > 0) {
+                                "下载（${formatModelSize(manifest.archiveSizeBytes)}）"
+                            } else {
+                                "下载"
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun formatModelSize(bytes: Long): String {
+    val mb = bytes / 1024.0 / 1024.0
+    return if (mb >= 1024) {
+        String.format(Locale.US, "%.1f GB", mb / 1024.0)
+    } else {
+        String.format(Locale.US, "%.0f MB", mb)
     }
 }
 

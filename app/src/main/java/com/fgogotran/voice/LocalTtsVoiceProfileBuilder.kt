@@ -26,7 +26,7 @@ class LocalTtsVoiceProfileBuilder @Inject constructor(
     private val tag = "LocalTtsVoiceBuilder"
 
     suspend fun build(server: String, nameBox: String, dialogue: String): TempVoiceProfileRow? {
-        val defaultModel = registry.preferredInstalled() ?: run {
+        val defaultModel = registry.selectedInstalled() ?: run {
             FgoLogger.warn(tag, "本地 TTS 无已安装模型，无法分配语音档案")
             return null
         }

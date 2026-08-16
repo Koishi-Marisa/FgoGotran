@@ -1,10 +1,17 @@
 package com.fgogotran.voice
 
 import android.content.Context
+import android.os.StatFs
 import com.fgogotran.data.SettingsRepository
 import com.fgogotran.diagnostic.DiagnosticEventStore
 import com.fgogotran.util.FgoLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.ktor.client.HttpClient
+import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsChannel
+import io.ktor.http.isSuccess
+import io.ktor.utils.io.readAvailable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -14,6 +21,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.security.MessageDigest
+import java.util.Locale
 import java.util.zip.ZipInputStream
 import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
@@ -46,6 +54,17 @@ class SherpaOnnxModelRegistry @Inject constructor(
     private val rootDir: File by lazy { File(context.filesDir, "sherpa_tts").also { it.mkdirs() } }
     private val modelsDir: File by lazy { File(rootDir, "models").also { it.mkdirs() } }
     private val registryFile: File by lazy { File(rootDir, "installed.json") }
+
+    /** App 内下载用 HTTP 客户端（大文件不设请求超时）。 */
+    private val httpClient: HttpClient by lazy {
+        HttpClient {
+            install(HttpTimeout) {
+                connectTimeoutMillis = 10_000L
+                requestTimeoutMillis = Long.MAX_VALUE // 模型包可能数百 MB，不设整体超时
+                socketTimeoutMillis = 60_000L
+            }
+        }
+    }
 
     // ==================================================================
     // 内置推荐模型清单（可按需扩展，社区模型由用户导入文件实现）
@@ -343,6 +362,13 @@ class SherpaOnnxModelRegistry @Inject constructor(
     /** 判断某模型是否已安装 */
     fun isInstalled(modelId: String): Boolean = installDirFor(modelId).isDirectory
 
+    /** 该模型是否随 APK assets 内置（卸载后会在下次启动/刷新时自动重新安装，无需手动卸载）。 */
+    fun isBundledInApk(modelId: String): Boolean {
+        return runCatching {
+            context.assets.list("sherpa_builtin_models").orEmpty().any { it == modelId }
+        }.getOrDefault(false)
+    }
+
     fun installDirFor(modelId: String): File = File(modelsDir, modelId)
 
     suspend fun installFromArchive(
@@ -403,6 +429,76 @@ class SherpaOnnxModelRegistry @Inject constructor(
         FgoLogger.info(tag, "卸载模型: $modelId")
     }
 
+    /**
+     * 从 [manifest.downloadUrl] 流式下载模型压缩包并安装（App 内下载）。
+     * 下载成功后自动把该模型设为用户选择。
+     *
+     * @param onProgress 进度回调（percent 0..100，message 为阶段描述，可在 UI 展示）
+     */
+    suspend fun downloadAndInstall(
+        manifest: SherpaOnnxModelManifest,
+        onProgress: (percent: Int, message: String) -> Unit
+    ): InstalledSherpaModel = withContext(Dispatchers.IO) {
+        require(manifest.downloadUrl.startsWith("https://")) {
+            "模型「${manifest.displayName}」缺少可用的下载地址"
+        }
+
+        // 存储空间预检：至少需要 压缩包 + 解压后增量 + 50MB 余量
+        val minFreeBytes =
+            manifest.archiveSizeBytes + (manifest.unpackedSizeBytes / 2) + (50L * 1024 * 1024)
+        val freeBytes = StatFs(context.filesDir.absolutePath).availableBytes
+        if (freeBytes < minFreeBytes) {
+            throw IllegalStateException(
+                "存储空间不足：需要约 ${formatMb(minFreeBytes)}，当前可用 ${formatMb(freeBytes)}。请清理后重试。"
+            )
+        }
+
+        val downloadDir = File(rootDir, "downloads").apply { mkdirs() }
+        val tempFile = File(downloadDir, "${manifest.modelId}.tar.bz2.download")
+        if (tempFile.exists() && !tempFile.delete()) {
+            throw IllegalStateException("无法清理旧的下载缓存: ${tempFile.name}")
+        }
+
+        FgoLogger.info(tag, "开始下载模型 ${manifest.modelId} <- ${manifest.downloadUrl}")
+        onProgress(1, "连接服务器")
+        val response = httpClient.get(manifest.downloadUrl)
+        if (!response.status.isSuccess()) {
+            throw IllegalStateException("下载失败 HTTP ${response.status.value}")
+        }
+        val expectedBytes = manifest.archiveSizeBytes.coerceAtLeast(1L)
+        val channel = response.bodyAsChannel()
+        tempFile.outputStream().buffered().use { output ->
+            val buffer = ByteArray(64 * 1024)
+            var written = 0L
+            while (true) {
+                val read = channel.readAvailable(buffer, 0, buffer.size)
+                if (read == -1) break
+                if (read > 0) {
+                    output.write(buffer, 0, read)
+                    written += read
+                }
+                val percent = ((written * 100) / expectedBytes).toInt().coerceIn(0, 94)
+                onProgress(percent, "下载中 ${formatMb(written)}")
+            }
+        }
+        FgoLogger.info(tag, "模型下载完成: ${tempFile.length()} bytes")
+
+        try {
+            val installed = installFromArchive(
+                manifest = manifest,
+                archiveFile = tempFile,
+                onProgress = { p, msg ->
+                    onProgress(94 + (p * 6 / 100), msg)
+                }
+            )
+            // 下载完成后自动切换为当前模型
+            settingsRepository.setSherpaSelectedModel(manifest.modelId)
+            installed
+        } finally {
+            runCatching { tempFile.delete() }
+        }
+    }
+
     /** 已安装模型列表（从注册表目录扫描） */
     fun listInstalled(): List<InstalledSherpaModel> {
         val catalog = builtinCatalog().associateBy { it.modelId }
@@ -438,6 +534,18 @@ class SherpaOnnxModelRegistry @Inject constructor(
         return installed.firstOrNull { it.manifest.modelId == "vits-zh-fanchen-C" }
             ?: installed.firstOrNull { it.manifest.language.startsWith("zh") }
             ?: installed.first()
+    }
+
+    /**
+     * 返回用户当前选择的模型（SettingsRepository.sherpa_selected_model）。
+     * 未选择或所选模型已被卸载时，回退到 [preferredInstalled]。
+     */
+    suspend fun selectedInstalled(): InstalledSherpaModel? {
+        val selectedId = settingsRepository.getSherpaSelectedModel().trim()
+        if (selectedId.isNotBlank()) {
+            listInstalled().firstOrNull { it.manifest.modelId == selectedId }?.let { return it }
+        }
+        return preferredInstalled()
     }
 
     // ==================================================================
@@ -506,6 +614,15 @@ class SherpaOnnxModelRegistry @Inject constructor(
         // 去掉 tar 最外层同名目录（sherpa 打包通常带一层）
         val parts = stripped.split('/', limit = 2)
         return if (parts.size == 2 && parts[0].isNotBlank() && !parts[0].contains('.')) parts[1] else stripped
+    }
+
+    private fun formatMb(bytes: Long): String {
+        val mb = bytes / 1024.0 / 1024.0
+        return if (mb >= 1024) {
+            String.format(Locale.US, "%.1f GB", mb / 1024.0)
+        } else {
+            String.format(Locale.US, "%.0f MB", mb)
+        }
     }
 
     private fun sha256(file: File): String {

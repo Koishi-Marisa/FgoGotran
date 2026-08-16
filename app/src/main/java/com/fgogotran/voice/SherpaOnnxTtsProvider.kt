@@ -98,8 +98,8 @@ class SherpaOnnxTtsProvider @Inject constructor(
         // 1) 若 APK 里打了 assets/sherpa_builtin_models/<id>/，首次启动自动静默安装
         registry.ensureAssetsModelsInstalled()
 
-        // 2) 尝试自动加载一个已安装的模型，后续 synthesize 可直接使用
-        val preferred = registry.preferredInstalled() ?: run {
+        // 2) 尝试自动加载当前选择的模型，后续 synthesize 可直接使用
+        val preferred = registry.selectedInstalled() ?: run {
             FgoLogger.warn(tag, "当前尚未安装任何本地 TTS 模型")
             return
         }
@@ -124,8 +124,8 @@ class SherpaOnnxTtsProvider @Inject constructor(
         val synthesized = mutex.withLock {
             warmUpIfNeeded()
 
-            val installed = registry.listInstalled().firstOrNull { it.manifest.modelId == activeModelId }
-                ?: registry.preferredInstalled()
+            // 当前用户选择的模型（设置页切换后这里会自动换模型并重载引擎）
+            val installed = registry.selectedInstalled()
                 ?: throw IllegalStateException("没有已安装的本地 TTS 模型，请到「语音设置」中下载")
             ensureModelLoaded(installed)
 
@@ -172,8 +172,15 @@ class SherpaOnnxTtsProvider @Inject constructor(
 
     override suspend fun listAvailableVoices(): List<VoiceProfile> {
         val installed = registry.listInstalled()
+        // 把用户当前选择的模型排在最前，测试语音等默认取第一个即可命中所选模型
+        val selectedId = settingsRepository.sherpaSelectedModel.first().trim()
+        val ordered = if (selectedId.isBlank()) {
+            installed
+        } else {
+            installed.sortedBy { if (it.manifest.modelId == selectedId) 0 else 1 }
+        }
         val defaultModel = registry.preferredInstalled()
-        return installed.flatMap { inst ->
+        return ordered.flatMap { inst ->
             inst.speakerNames().mapIndexed { idx, name ->
                 VoiceProfile(
                     profileId = "${inst.manifest.modelId}#spk$idx",
