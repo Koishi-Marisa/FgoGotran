@@ -103,7 +103,7 @@ fun DebugLogScreen(
                         val text = FgoLogger.dumpBuffer().joinToString("\n")
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         clipboard.setPrimaryClip(ClipData.newPlainText("FgoGotran 调试日志", text))
-                        actionMessage = if (text.isBlank()) "日志为空" else "已复制 ${text.lineCount()} 行"
+                        actionMessage = if (text.isBlank()) "日志为空" else "已复制 ${text.lines().size} 行"
                     }
                 ) {
                     Text("复制全部")

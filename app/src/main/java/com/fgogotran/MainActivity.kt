@@ -17,6 +17,7 @@ import com.fgogotran.ui.component.AutoAppUpdateDialog
 import com.fgogotran.ui.component.openAppDownloadPage
 import com.fgogotran.update.AppVersionManager
 import com.fgogotran.ui.screen.ApiSettingsScreen
+import com.fgogotran.ui.screen.DebugLogScreen
 import com.fgogotran.ui.screen.DiagnosticLogScreen
 import com.fgogotran.ui.screen.GuideScreen
 import com.fgogotran.ui.screen.HomeScreen
