@@ -133,8 +133,14 @@ class SherpaOnnxTtsProvider @Inject constructor(
             val text = request.spokenText.trim()
                 .ifBlank { throw IllegalArgumentException("合成文本为空") }
 
-            val audio = tts?.generate(text, sid, speed)
-                ?: throw IllegalStateException("Sherpa OfflineTts 未初始化")
+            val audio = try {
+                tts?.generate(text, sid, speed)
+                    ?: throw IllegalStateException("Sherpa OfflineTts 未初始化")
+            } catch (e: UnsatisfiedLinkError) {
+                throw IllegalStateException("本地 TTS 推理失败（native 库异常）：${e.message}", e)
+            } catch (e: OutOfMemoryError) {
+                throw IllegalStateException("本地 TTS 内存不足，请缩短文本或切换为 Azure 云端合成", e)
+            }
 
             outputFile.parentFile?.mkdirs()
             writeWav(outputFile, audio.samples, audio.sampleRate)
@@ -206,16 +212,29 @@ class SherpaOnnxTtsProvider @Inject constructor(
 
         return when (installed.manifest.modelType) {
             SherpaModelType.VITS_PLAIN -> {
+                // 中文 VITS 模型（如 vits-zh-ll）需要 lexicon.txt + jieba dict 才能正确分词；
+                // 缺少 lexicon 会导致 native 层 Lexicon 查找失败而 SIGABRT（sherpa-onnx#823）。
+                val lexiconFile = File(dir, "lexicon.txt")
                 val vits = OfflineTtsVitsModelConfig(
                     model = "$dir/model.onnx",
                     tokens = "$dir/tokens.txt",
-                    lexicon = ""
+                    lexicon = if (lexiconFile.isFile) lexiconFile.absolutePath else ""
                 )
                 val dictDir = File(dir, "dict")
                 if (dictDir.isDirectory) {
                     vits.dictDir = dictDir.absolutePath
                 }
-                OfflineTtsConfig(model = baseModelConfig.copy(vits = vits))
+                // 中文模型常附带 date/number/phone/heteronym .fst 用于文本正规化
+                val ruleFsts = listOf("date.fst", "number.fst", "phone.fst", "new_heteronym.fst")
+                    .mapNotNull { name ->
+                        val f = File(dir, name)
+                        if (f.isFile) f.absolutePath else null
+                    }
+                    .joinToString(",")
+                OfflineTtsConfig(
+                    model = baseModelConfig.copy(vits = vits),
+                    ruleFsts = ruleFsts
+                )
             }
 
             SherpaModelType.PIPER_VITS -> {
