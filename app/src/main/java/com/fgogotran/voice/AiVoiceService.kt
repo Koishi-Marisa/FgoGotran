@@ -122,7 +122,8 @@ class AiVoiceService @Inject constructor(
             dialogue = dialogue,
             voiceHint = voiceHint,
             azureSpeechRegion = speechRegion,
-            aiVoiceSpeedPercent = voiceSpeedPercent
+            aiVoiceSpeedPercent = voiceSpeedPercent,
+            allowTempApi = provider.requiresCredentials
         )
         if (preparedLines.isEmpty()) {
             FgoLogger.debug(tag, "No AI voice profile for speaker: $speaker")
@@ -387,13 +388,15 @@ class AiVoiceService @Inject constructor(
         dialogue: String,
         voiceHint: VoiceLineHint?,
         azureSpeechRegion: String,
-        aiVoiceSpeedPercent: Int
+        aiVoiceSpeedPercent: Int,
+        allowTempApi: Boolean = true
     ): List<PreparedVoiceLine> {
         return speakers.mapNotNull { speaker ->
             val profile = resolveVoiceProfile(
                 gameServer = gameServer,
                 speaker = speaker,
-                dialogue = dialogue
+                dialogue = dialogue,
+                allowTempApi = allowTempApi
             ) ?: run {
                 FgoLogger.debug(tag, "No AI voice profile for speaker: $speaker")
                 return@mapNotNull null
@@ -510,7 +513,8 @@ class AiVoiceService @Inject constructor(
     private suspend fun resolveVoiceProfile(
         gameServer: String,
         speaker: String,
-        dialogue: String
+        dialogue: String,
+        allowTempApi: Boolean = true
     ): VoiceProfile? {
         val lookupCandidates = voiceSpeakerLookupCandidates(speaker)
         lookupCandidates.firstNotNullOfOrNull { candidate ->
@@ -561,6 +565,24 @@ class AiVoiceService @Inject constructor(
                 detail = "curated=miss temp=miss",
                 textPreview = dialogue.previewText()
             )
+            if (!allowTempApi) {
+                FgoLogger.info(
+                    tag,
+                    "Temp voice API skipped for local provider: server=$normalizedServer speaker=$speaker"
+                )
+                diagnosticEventStore.record(
+                    level = DiagnosticEventStore.LEVEL_INFO,
+                    category = DiagnosticEventStore.CATEGORY_TEMP_VOICE_API,
+                    eventId = "temp_voice_api_skipped_local",
+                    title = "本地 TTS 跳过临时语音 API",
+                    message = "当前为本地 TTS，且角色无已缓存语音档案",
+                    server = normalizedServer,
+                    speaker = speaker,
+                    textPreview = dialogue.previewText()
+                )
+                return@withLock null
+            }
+
             diagnosticEventStore.record(
                 level = DiagnosticEventStore.LEVEL_INFO,
                 category = DiagnosticEventStore.CATEGORY_TEMP_VOICE_API,
