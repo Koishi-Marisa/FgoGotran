@@ -242,11 +242,11 @@ class SherpaOnnxTtsProvider @Inject constructor(
      * 解析模型主文件路径：优先 model.onnx；缺失时兜底目录内体积最大的
      * 非 vocoder .onnx（双保险，兼容未迁移的旧安装/自定义导入目录）。
      */
-    private fun resolveModelOnnx(dir: File, modelId: String): String {
+    private fun resolveModelOnnx(dir: String, modelId: String): String {
         val canonical = File(dir, "model.onnx")
         if (canonical.isFile) return canonical.absolutePath
 
-        val fallback = dir.listFiles { f ->
+        val fallback = File(dir).listFiles { f ->
             f.isFile && f.extension.equals("onnx", ignoreCase = true) &&
                 !f.name.startsWith("hifigan", ignoreCase = true) &&
                 !f.name.startsWith("vocoder", ignoreCase = true)
@@ -257,7 +257,7 @@ class SherpaOnnxTtsProvider @Inject constructor(
             return fallback.absolutePath
         }
         throw IllegalStateException(
-            "模型目录缺少 .onnx 文件（${dir.absolutePath}），请在「语音设置」中重新下载 $modelId"
+            "模型目录缺少 .onnx 文件（$dir），请在「语音设置」中重新下载 $modelId"
         )
     }
 
