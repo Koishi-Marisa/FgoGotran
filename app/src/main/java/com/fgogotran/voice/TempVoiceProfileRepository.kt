@@ -158,6 +158,22 @@ class TempVoiceProfileRepository @Inject constructor(
     }
 
     private fun TempVoiceProfileRow.toVoiceProfile(server: String): VoiceProfile {
+        val isLocalTts = voiceName.startsWith(LOCAL_PREFIX)
+        // 本地 TTS 档案：voiceName 形如 "sherpa:<modelId>"，由 LocalTtsVoiceProfileBuilder 写入
+        if (isLocalTts) {
+            val modelId = voiceName.removePrefix(LOCAL_PREFIX).takeIf(String::isNotBlank) ?: "vits-zh-ll"
+            return VoiceProfile(
+                profileId = "local:$server:${VoiceNameNormalizer.normalize(nameBox)}",
+                provider = SherpaOnnxTtsProvider.PROVIDER_ID,
+                locale = "zh-CN",
+                voiceName = modelId,
+                style = style.ifBlank { voiceType },
+                pitch = pitch.ifBlank { "0%" },
+                rate = rate.ifBlank { "1.00" },
+                volume = volume.ifBlank { "100" },
+                description = voiceType
+            )
+        }
         return VoiceProfile(
             profileId = "temp:$server:${VoiceNameNormalizer.normalize(nameBox)}",
             provider = AZURE_PROVIDER,
@@ -197,6 +213,7 @@ class TempVoiceProfileRepository @Inject constructor(
 
     private companion object {
         const val AZURE_PROVIDER = "azure"
+        const val LOCAL_PREFIX = "sherpa:"
         const val COLUMN_COUNT = 10
         const val HEADER_PREFIX = "name_box\t"
         const val HEADER = "name_box\tvoice_type\tcn_voice_name\tcn_style\tcn_pitch\tcn_rate\tcn_volume\treason\tsource_dialogue\tcreated_at\tupdated_at"

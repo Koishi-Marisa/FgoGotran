@@ -43,6 +43,7 @@ class AiVoiceService @Inject constructor(
     private val azureTtsClient: AzureTtsClient,
     private val azureTtsProvider: AzureTtsProvider,
     private val sherpaOnnxTtsProvider: SherpaOnnxTtsProvider,
+    private val localTtsVoiceProfileBuilder: LocalTtsVoiceProfileBuilder,
     private val audioCache: VoiceAudioCache,
     private val playbackEngine: VoicePlaybackEngine
 ) {
@@ -531,6 +532,10 @@ class AiVoiceService @Inject constructor(
         val now = System.currentTimeMillis()
         val retryAt = tempProfileFailureRetryAt[tempKey] ?: 0L
         if (retryAt > now) {
+            if (!allowTempApi) {
+                // 本地 TTS：冷却期间直接用默认音色兜底，保持可发声
+                return localTtsVoiceProfileBuilder.fallbackProfile(normalizedServer, speaker)
+            }
             FgoLogger.debug(tag, "Temp voice profile API cooldown active: server=$normalizedServer speaker=$speaker")
             diagnosticEventStore.record(
                 level = DiagnosticEventStore.LEVEL_WARNING,
@@ -566,21 +571,15 @@ class AiVoiceService @Inject constructor(
                 textPreview = dialogue.previewText()
             )
             if (!allowTempApi) {
-                FgoLogger.info(
-                    tag,
-                    "Temp voice API skipped for local provider: server=$normalizedServer speaker=$speaker"
-                )
-                diagnosticEventStore.record(
-                    level = DiagnosticEventStore.LEVEL_INFO,
-                    category = DiagnosticEventStore.CATEGORY_TEMP_VOICE_API,
-                    eventId = "temp_voice_api_skipped_local",
-                    title = "本地 TTS 跳过临时语音 API",
-                    message = "当前为本地 TTS，且角色无已缓存语音档案",
+                // 本地 TTS：无档案角色用 AI 分配本地音色/语气；AI 不可用时回退默认音色，
+                // 保证角色一定有声音、不再报错。
+                return@withLock buildLocalTtsProfile(
                     server = normalizedServer,
                     speaker = speaker,
-                    textPreview = dialogue.previewText()
+                    dialogue = dialogue,
+                    tempKey = tempKey,
+                    now = now
                 )
-                return@withLock null
             }
 
             diagnosticEventStore.record(
@@ -635,6 +634,75 @@ class AiVoiceService @Inject constructor(
                 FgoLogger.warn(tag, "Temp voice profile generation failed: server=$normalizedServer speaker=$speaker", e)
             }.getOrNull()?.second
         }
+    }
+
+    /**
+     * 本地 TTS：无语音档案的角色通过 AI 调用自动分配本地音色/语气参数。
+     *
+     * - AI 分配成功：把 voice_type / cn_rate / cn_pitch 持久化到临时语音表
+     *   （[TempVoiceProfileRow] 的 voiceName 带 "sherpa:" 前缀，下次直接命中缓存），
+     *   并清除失败冷却。
+     * - AI 分配失败（无 API key / 无已安装模型 / 返回格式错误）：记录诊断、设置
+     *   冷却避免重复请求，并回退到默认音色，保证角色一定有声音、不报错。
+     *
+     * 注意：调用方已持有 [tempProfileMutex]，本函数不能再获取同一把锁。
+     */
+    private suspend fun buildLocalTtsProfile(
+        server: String,
+        speaker: String,
+        dialogue: String,
+        tempKey: String,
+        now: Long
+    ): VoiceProfile? {
+        var assigned: VoiceProfile? = null
+        runCatching {
+            val row = localTtsVoiceProfileBuilder.build(
+                server = server,
+                nameBox = speaker,
+                dialogue = dialogue
+            ) ?: throw IllegalStateException("Local TTS voice AI returned no result")
+            val profile = tempVoiceProfileRepository.upsert(server, row)
+                ?: throw IllegalStateException("Local TTS voice profile could not be stored")
+            row to profile
+        }.onSuccess { (row, profile) ->
+            assigned = profile
+            tempProfileFailureRetryAt.remove(tempKey)
+            diagnosticEventStore.record(
+                level = DiagnosticEventStore.LEVEL_INFO,
+                category = DiagnosticEventStore.CATEGORY_TEMP_VOICE_API,
+                eventId = "local_tts_voice_assigned",
+                title = "本地 TTS 语音已自动分配",
+                message = "rate=${row.rate} pitch=${row.pitch}",
+                server = server,
+                speaker = speaker,
+                detail = listOfNotNull(
+                    row.voiceType.takeIf(String::isNotBlank)?.let { "type=$it" },
+                    row.reason.takeIf(String::isNotBlank)?.let { "reason=$it" }
+                ).joinToString(" "),
+                voiceType = row.voiceType,
+                voiceName = row.voiceName,
+                textPreview = dialogue.previewText()
+            )
+            FgoLogger.info(
+                tag,
+                "Local TTS voice assigned: server=$server speaker=$speaker type=${row.voiceType} rate=${row.rate}"
+            )
+        }.onFailure { e ->
+            assigned = localTtsVoiceProfileBuilder.fallbackProfile(server, speaker)
+            tempProfileFailureRetryAt[tempKey] = now + TEMP_PROFILE_FAILURE_COOLDOWN_MS
+            diagnosticEventStore.record(
+                level = DiagnosticEventStore.LEVEL_WARNING,
+                category = DiagnosticEventStore.CATEGORY_TEMP_VOICE_API,
+                eventId = "local_tts_voice_assignment_failed",
+                title = "本地 TTS 语音 AI 分配失败，使用默认音色",
+                message = e.message.orEmpty().ifBlank { e::class.java.simpleName },
+                server = server,
+                speaker = speaker,
+                textPreview = dialogue.previewText()
+            )
+            FgoLogger.warn(tag, "Local TTS voice assignment failed: server=$server speaker=$speaker", e)
+        }
+        return assigned
     }
 
     private fun voiceTextFor(

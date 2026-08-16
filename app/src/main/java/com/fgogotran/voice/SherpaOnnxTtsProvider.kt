@@ -38,7 +38,7 @@ class SherpaOnnxTtsProvider @Inject constructor(
     private val speakerMappings: SherpaSpeakerMappings
 ) : TtsProvider {
 
-    override val providerId: String = "sherpa_onnx"
+    override val providerId: String = PROVIDER_ID
     override val displayName: String = "Sherpa-ONNX 本地离线合成"
     override val requiresNetwork: Boolean = false
     override val requiresCredentials: Boolean = false
@@ -280,10 +280,40 @@ class SherpaOnnxTtsProvider @Inject constructor(
     }
 
     private suspend fun resolveSpeed(request: VoiceSynthesisRequest): Float {
+        // 1) AI 语气增强给出的最终语速（ChineseVoiceEmotionStyle 已把用户全局速度
+        //    baseSpeedMultiplier 与情感微调合并进 rateOverride，格式如 "1.03"）
+        parseRateMultiplier(request.rateOverride)?.let { return it }
+
+        // 2) 语音档案语速：临时语音档案（Azure 或本地 AI 分配）会带 rate 如 "0.96"
+        request.profile.rate.takeIf { !it.isNoRateSetting() }
+            ?.let(::parseRateMultiplier)
+            ?.let { return it }
+
+        // 3) 全局速度兜底：115% -> 1.15x
         val pct = request.aiVoiceSpeedPercent.takeIf { it in 50..200 }
             ?: settingsRepository.aiVoiceSpeedPercent.first().coerceIn(50, 200)
-        // 115% -> 1.15x speed
         return (pct / 100f).coerceIn(0.5f, 2.0f)
+    }
+
+    /** "15%" -> 1.15、"0.96" -> 0.96；无法解析返回 null */
+    private fun parseRateMultiplier(raw: String?): Float? {
+        if (raw.isNullOrBlank()) return null
+        val trimmed = raw.trim()
+        val value = if (trimmed.endsWith("%")) {
+            val percent = trimmed.dropLast(1).toDoubleOrNull() ?: return null
+            1.0 + percent / 100.0
+        } else {
+            trimmed.toDoubleOrNull() ?: return null
+        }
+        return value.toFloat().coerceIn(0.5f, 2.0f)
+    }
+
+    private fun String.isNoRateSetting(): Boolean {
+        return isBlank() || this == "0" || this == "0%" || this == "+0%" || this == "-0%"
+    }
+
+    companion object {
+        const val PROVIDER_ID = "sherpa_onnx"
     }
 
     /** 将 float [-1,1] 音频以 16-bit PCM 写入 WAV */
