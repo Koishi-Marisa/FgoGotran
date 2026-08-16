@@ -32,8 +32,8 @@ android {
         applicationId = "com.fgogotran"
         minSdk = 30
         targetSdk = 34
-        versionCode = 18
-        versionName = "2.2.11"
+        versionCode = 19
+        versionName = "2.2.12"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
@@ -345,6 +345,11 @@ dependencies {
 
     // Apache Commons Compress：SherpaOnnxModelRegistry 解压 tar.bz2 模型包
     implementation("org.apache.commons:commons-compress:1.27.1")
+
+    // Shizuku：经 adb（或无线调试）一次性授权后，可在 App 内自动开启
+    // 无障碍服务 + 悬浮窗权限，免去每次手动进系统设置
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
 
     // Ktor HTTP client
     implementation("io.ktor:ktor-client-android:2.3.12")

@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
+import androidx.compose.material3.AlertDialog as MaterialAlertDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
@@ -32,6 +33,7 @@ import androidx.compose.ui.window.Dialog
 import com.fgogotran.accessibility.FgoAccessibilityService
 import com.fgogotran.data.SettingsRepository
 import com.fgogotran.diagnostic.DiagnosticEventStore
+import com.fgogotran.permission.ShizukuGrantManager
 import com.fgogotran.runner.FgoRunnerService
 import com.fgogotran.R
 import kotlinx.coroutines.delay
@@ -81,6 +83,14 @@ fun HomeScreen(
     var showServerDialog by remember { mutableStateOf(false) }
     val lifecycleOwner = LocalLifecycleOwner.current
 
+    // Shizuku 一键授权状态
+    var shizukuAvailable by remember { mutableStateOf(ShizukuGrantManager.isAvailable()) }
+    var shizukuBusy by remember { mutableStateOf(false) }
+    var shizukuGrantMessage by remember { mutableStateOf<String?>(null) }
+    val shizukuPermission by ShizukuGrantManager.permissionGranted.collectAsState(
+        initial = ShizukuGrantManager.hasPermission()
+    )
+
     // update permissions state
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -90,6 +100,8 @@ fun HomeScreen(
                 isIgnoringBatteryOptimizations = context
                     .getSystemService(PowerManager::class.java)
                     .isIgnoringBatteryOptimizations(context.packageName)
+                shizukuAvailable = ShizukuGrantManager.isAvailable()
+                ShizukuGrantManager.syncPermissionState()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -267,6 +279,42 @@ fun HomeScreen(
                 actionText = "去授权 →",
                 onClick = { showOverlayPermissionDisclosure(context) }
             )
+
+            ShizukuGrantCard(
+                shizukuAvailable = shizukuAvailable,
+                shizukuPermission = shizukuPermission,
+                shizukuBusy = shizukuBusy,
+                accessibilityEnabled = accessibilityRunning,
+                overlayEnabled = canDrawOverlays,
+                onRequestPermission = { ShizukuGrantManager.requestPermission() },
+                onGrant = {
+                    scope.launch {
+                        shizukuBusy = true
+                        val result = ShizukuGrantManager.grantAccessibilityAndOverlay(context)
+                        shizukuBusy = false
+                        // 手动刷新权限状态，无需等待 ON_RESUME
+                        accessibilityEnabled = FgoAccessibilityService.isEnabledInSettings(context)
+                        canDrawOverlays = Settings.canDrawOverlays(context)
+                        shizukuGrantMessage = result.messages.joinToString("\n")
+                    }
+                },
+                onShowSetupHelp = { showShizukuSetupHelp(context) }
+            )
+
+            if (shizukuGrantMessage != null) {
+                MaterialAlertDialog(
+                    onDismissRequest = { shizukuGrantMessage = null },
+                    title = { Text("Shizuku 授权结果") },
+                    text = {
+                        Text(shizukuGrantMessage.orEmpty())
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { shizukuGrantMessage = null }) {
+                            Text("知道了")
+                        }
+                    }
+                )
+            }
 
             Text(
                 text = "可选稳定性（非必要）",
@@ -654,5 +702,124 @@ private fun showOverlayPermissionDisclosure(context: Context) {
             context.startActivity(intent)
         }
         .setNegativeButton("取消", null)
+        .show()
+}
+
+@Composable
+private fun ShizukuGrantCard(
+    shizukuAvailable: Boolean,
+    shizukuPermission: Boolean,
+    shizukuBusy: Boolean,
+    accessibilityEnabled: Boolean,
+    overlayEnabled: Boolean,
+    onRequestPermission: () -> Unit,
+    onGrant: () -> Unit,
+    onShowSetupHelp: () -> Unit
+) {
+    val buttonText = when {
+        !shizukuAvailable -> "安装 / 授权 Shizuku"
+        !shizukuPermission -> "授权 Shizuku"
+        else -> "一键授权（悬浮窗 + 无障碍）"
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "Shizuku 一键授权",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f)
+                )
+                if (shizukuBusy) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp
+                    )
+                }
+            }
+            Text(
+                text = "经 adb 一次性授权 Shizuku 后，可在 App 内自动开启无障碍与悬浮窗权限，免去每次手动进系统设置。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            val shizukuStatusText = when {
+                !shizukuAvailable -> "不可用（未安装或未 adb 授权）"
+                !shizukuPermission -> "已连接，待授权"
+                else -> "已授权"
+            }
+            val shizukuStatusColor =
+                if (shizukuAvailable && shizukuPermission) Color(0xFF4CAF50) else Color(0xFFFF9800)
+            ShizukuStatusRow("Shizuku", shizukuStatusText, shizukuStatusColor)
+            ShizukuStatusRow(
+                "悬浮窗",
+                if (overlayEnabled) "已授权" else "未授权",
+                if (overlayEnabled) Color(0xFF4CAF50) else Color(0xFFFF9800)
+            )
+            ShizukuStatusRow(
+                "无障碍",
+                if (accessibilityEnabled) "已启用" else "未启用",
+                if (accessibilityEnabled) Color(0xFF4CAF50) else Color(0xFFFF9800)
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+            Button(
+                onClick = {
+                    when {
+                        !shizukuAvailable -> onShowSetupHelp()
+                        !shizukuPermission -> onRequestPermission()
+                        else -> onGrant()
+                    }
+                },
+                enabled = !shizukuBusy,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(buttonText)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShizukuStatusRow(label: String, statusText: String, statusColor: Color) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Surface(
+            shape = MaterialTheme.shapes.extraSmall,
+            color = statusColor,
+            modifier = Modifier.size(8.dp)
+        ) {}
+        Text(
+            text = "$label：$statusText",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
+        )
+    }
+}
+
+private fun showShizukuSetupHelp(context: Context) {
+    AlertDialog.Builder(context, R.style.Theme_FgoGotran_Dialog)
+        .setTitle("Shizuku 使用说明")
+        .setMessage(
+            """
+            Shizuku 可让 FgoGotran 借用 adb 的 shell 权限，自动开启无障碍与悬浮窗权限，免去每次手动设置。首次需一次性配置：
+
+            1. 安装 Shizuku：https://shizuku.rikka.app/
+            2. 电脑连接手机后执行 adb 授权（二选一）：
+               · 有线：adb shell sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh
+               · 无线：手机开启「无线调试」→ Shizuku 内使用配对码配对
+            3. 回到本页，点击「授权 Shizuku」，再点「一键授权（悬浮窗 + 无障碍）」
+
+            配置一次后，重装 App / 系统重置后都能在 App 内一键恢复这两个权限。
+            """.trimIndent()
+        )
+        .setPositiveButton("知道了", null)
         .show()
 }

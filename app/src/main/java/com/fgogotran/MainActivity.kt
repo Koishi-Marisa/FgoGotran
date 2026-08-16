@@ -11,6 +11,7 @@ import androidx.lifecycle.lifecycleScope
 import com.fgogotran.analytics.AppAnalytics
 import com.fgogotran.data.SettingsRepository
 import com.fgogotran.diagnostic.DiagnosticEventStore
+import com.fgogotran.permission.ShizukuGrantManager
 import com.fgogotran.terminology.GlossaryUpdateManager
 import com.fgogotran.translation.Translator
 import com.fgogotran.ui.component.AutoAppUpdateDialog
@@ -89,6 +90,19 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    /**
+     * 转发 Shizuku 授权回调（Compose 中无法直接挂 Activity 级回调，
+     * 由 ShizukuGrantManager 统一接收并更新状态流）。
+     */
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        ShizukuGrantManager.onRequestPermissionsResult(requestCode, grantResults)
     }
 }
 

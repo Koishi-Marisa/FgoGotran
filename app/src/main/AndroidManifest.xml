@@ -4,6 +4,9 @@
     <!-- Overlay permission for touch-transparent window above FGO -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
+    <!-- Shizuku: allow the app to request shell-level grants (accessibility + overlay) -->
+    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+
     <!-- Foreground service (required for the floating button overlay service) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
