@@ -94,7 +94,7 @@ class MainActivity : ComponentActivity() {
 /**
  * Top-level navigation state and routing.
  */
-enum class Screen { HOME, GUIDE, SETTINGS, API_SETTINGS, VOICE_SETTINGS, DIAGNOSTIC_LOG }
+enum class Screen { HOME, GUIDE, SETTINGS, API_SETTINGS, VOICE_SETTINGS, DIAGNOSTIC_LOG, DEBUG_LOG }
 
 /**
  * Root composable managing top-level navigation.
@@ -150,7 +150,8 @@ fun MainScreen(
         currentScreen = when (currentScreen) {
             Screen.API_SETTINGS,
             Screen.VOICE_SETTINGS,
-            Screen.DIAGNOSTIC_LOG -> Screen.SETTINGS
+            Screen.DIAGNOSTIC_LOG,
+            Screen.DEBUG_LOG -> Screen.SETTINGS
             else -> Screen.HOME
         }
     }
@@ -174,6 +175,7 @@ fun MainScreen(
             onApiSettings = { currentScreen = Screen.API_SETTINGS },
             onVoiceSettings = { currentScreen = Screen.VOICE_SETTINGS },
             onDiagnosticLog = { currentScreen = Screen.DIAGNOSTIC_LOG },
+            onDebugLog = { currentScreen = Screen.DEBUG_LOG },
             onBack = { currentScreen = Screen.HOME }
         )
 
@@ -193,6 +195,10 @@ fun MainScreen(
 
         Screen.DIAGNOSTIC_LOG -> DiagnosticLogScreen(
             diagnosticEventStore = diagnosticEventStore,
+            onBack = { currentScreen = Screen.SETTINGS }
+        )
+
+        Screen.DEBUG_LOG -> DebugLogScreen(
             onBack = { currentScreen = Screen.SETTINGS }
         )
     }

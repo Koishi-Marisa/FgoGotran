@@ -82,6 +82,7 @@ fun SettingsScreen(
     onApiSettings: () -> Unit,
     onVoiceSettings: () -> Unit,
     onDiagnosticLog: () -> Unit,
+    onDebugLog: () -> Unit,
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
@@ -497,6 +498,10 @@ fun SettingsScreen(
                 ) {
                     Button(onClick = onDiagnosticLog) {
                         Text("打开错误纪录")
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    OutlinedButton(onClick = onDebugLog) {
+                        Text("调试日志")
                     }
                 }
             }
