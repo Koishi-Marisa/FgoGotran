@@ -10,7 +10,6 @@ import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.get
 import io.ktor.client.request.header
-import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.HttpHeaders
 import io.ktor.http.isSuccess
@@ -441,20 +440,84 @@ class SherpaOnnxModelRegistry @Inject constructor(
     }
 
     /**
-     * 国内访问 GitHub 困难时使用的下载加速代理前缀。
+     * 国内访问 GitHub 困难时使用的下载加速线路（反向代理）。
      * 格式：在原始 GitHub URL 前拼接该前缀即可。
      */
-    private val ghProxyPrefix: String = "https://ghfast.top/"
+    data class GhProxyLine(
+        val label: String,
+        val prefix: String
+    )
 
-    /** 对 GitHub 下载 URL 应用加速代理（非 GitHub 的 URL 保持不变）。 */
-    private fun proxyDownloadUrl(originalUrl: String): String {
+    companion object {
+        /** 候选加速线路，按默认优先级排序；用户可在设置页手动切换。 */
+        val GH_PROXY_LINES: List<GhProxyLine> = listOf(
+            GhProxyLine("ghfast.top", "https://ghfast.top/"),
+            GhProxyLine("ghproxy.cn", "https://ghproxy.cn/"),
+            GhProxyLine("gh-proxy.com", "https://gh-proxy.com/"),
+            GhProxyLine("moeyy", "https://github.moeyy.xyz/"),
+            GhProxyLine("ghproxy.net", "https://ghproxy.net/")
+        )
+    }
+
+    /** 某线路的加速下载 URL（非 GitHub 的 URL 不使用代理）。 */
+    private fun proxyDownloadUrl(prefix: String, originalUrl: String): String {
         return if (originalUrl.startsWith("https://github.com/") ||
             originalUrl.startsWith("https://raw.githubusercontent.com/") ||
             originalUrl.startsWith("https://objects.githubusercontent.com/")
         ) {
-            ghProxyPrefix + originalUrl
+            prefix + originalUrl
         } else {
             originalUrl
+        }
+    }
+
+    /** 测速探针单次结果。 */
+    data class ProxySpeedResult(
+        val line: GhProxyLine,
+        val success: Boolean,
+        val latencyMs: Long,
+        val speedMBps: Float,
+        val error: String = ""
+    )
+
+    /**
+     * 对某条加速线路测速：Range 下载 512KB 探针，统计首字节延迟与平均速度。
+     * [probeUrl] 为原始 GitHub 下载 URL。
+     */
+    suspend fun testProxySpeed(
+        line: GhProxyLine,
+        probeUrl: String
+    ): ProxySpeedResult = withContext(Dispatchers.IO) {
+        val url = if (probeUrl.startsWith("https://")) line.prefix + probeUrl else probeUrl
+        val start = System.currentTimeMillis()
+        try {
+            val resp = httpClient.get(url) {
+                header(HttpHeaders.Range, "bytes=0-524287")
+                header(HttpHeaders.UserAgent, "FgoGotran")
+            }
+            if (!resp.status.isSuccess()) {
+                return@withContext ProxySpeedResult(
+                    line, false, System.currentTimeMillis() - start, 0f,
+                    "HTTP ${resp.status.value}"
+                )
+            }
+            val channel = resp.bodyAsChannel()
+            var bytes = 0L
+            val buf = ByteArray(64 * 1024)
+            val target = 512L * 1024
+            while (bytes < target) {
+                val r = channel.readAvailable(buf, 0, buf.size)
+                if (r == -1) break
+                bytes += r
+            }
+            val elapsedMs = (System.currentTimeMillis() - start).coerceAtLeast(1)
+            val speed = bytes / 1024f / 1024f / (elapsedMs / 1000f)
+            ProxySpeedResult(line, true, elapsedMs, speed)
+        } catch (e: Throwable) {
+            ProxySpeedResult(
+                line, false, System.currentTimeMillis() - start, 0f,
+                e.message?.take(80) ?: e.javaClass.simpleName
+            )
         }
     }
 
@@ -508,64 +571,116 @@ class SherpaOnnxModelRegistry @Inject constructor(
         val downloadDir = File(rootDir, "downloads").apply { mkdirs() }
         val tempFile = File(downloadDir, "${manifest.modelId}.tar.bz2")
 
-        val actualUrl = proxyDownloadUrl(manifest.downloadUrl)
+        // 候选线路：用户手动选择的优先，其余按默认顺序兜底
+        val userPrefix = settingsRepository.getSherpaDownloadProxy().trim()
+            .takeIf { it.isNotBlank() }
+        val candidates = buildList {
+            GH_PROXY_LINES.firstOrNull { it.prefix == userPrefix }?.let { add(it) }
+            addAll(GH_PROXY_LINES.filter { it.prefix != userPrefix })
+        }
+
+        var lastError: Throwable? = null
+        for (line in candidates) {
+            try {
+                onProgress(1, "连接 ${line.label}")
+                val installed = downloadViaLine(manifest, line, tempFile, onProgress)
+                // 下载成功 → 记住该线路，下次优先
+                settingsRepository.setSherpaDownloadProxy(line.prefix)
+                return@withContext installed
+            } catch (e: Throwable) {
+                lastError = e
+                FgoLogger.warn(tag, "线路 ${line.label} 下载失败：${e.message}")
+                onProgress(1, "${line.label} 失败，尝试下一线路…")
+            }
+        }
+        throw lastError ?: IOException("所有加速线路均不可用")
+    }
+
+    /**
+     * 用指定线路下载并安装模型。支持断点续传；416（Range 起点无效）时清空临时文件从头下载。
+     */
+    private suspend fun downloadViaLine(
+        manifest: SherpaOnnxModelManifest,
+        line: GhProxyLine,
+        tempFile: File,
+        onProgress: (percent: Int, message: String) -> Unit
+    ): InstalledSherpaModel = withContext(Dispatchers.IO) {
+        val actualUrl = proxyDownloadUrl(line.prefix, manifest.downloadUrl)
         val expectedBytes = manifest.archiveSizeBytes.coerceAtLeast(1L)
         var resumeFrom = 0L
         if (tempFile.exists() && tempFile.length() in 1 until expectedBytes) {
-            // 上次下载中断留下的部分文件 → 断点续传
             resumeFrom = tempFile.length()
             FgoLogger.info(tag, "断点续传 ${manifest.modelId}：已有 ${formatMb(resumeFrom)}")
         } else if (tempFile.exists()) {
-            // 文件已完整（异常残留）或长度非法 → 从头再来
             if (!tempFile.delete()) throw IllegalStateException("无法清理旧的下载缓存: ${tempFile.name}")
         }
 
-        FgoLogger.info(tag, "开始下载模型 ${manifest.modelId} <- $actualUrl" +
-            (if (resumeFrom > 0) " (从 ${formatMb(resumeFrom)} 续传)" else ""))
-        onProgress(1, if (resumeFrom > 0) "连接服务器（续传）" else "连接服务器")
-        val request: suspend () -> HttpResponse = {
-            httpClient.get(actualUrl) {
+        var attempt = 0
+        while (true) {
+            attempt++
+            FgoLogger.info(tag, "开始下载模型 ${manifest.modelId} <- $actualUrl" +
+                (if (resumeFrom > 0) " (从 ${formatMb(resumeFrom)} 续传)" else "") +
+                " 尝试#$attempt")
+            val response = httpClient.get(actualUrl) {
                 if (resumeFrom > 0) header(HttpHeaders.Range, "bytes=$resumeFrom-")
+                header(HttpHeaders.UserAgent, "FgoGotran")
             }
-        }
-        val response = request()
-        if (!response.status.isSuccess()) {
-            throw IllegalStateException("下载失败 HTTP ${response.status.value}")
-        }
-        // 仅当服务器确认断点续传（206）时保留已下载部分；否则（200 全量）清空重下
-        val resumed = response.status.value == 206 && resumeFrom > 0
-        if (!resumed) {
-            if (resumeFrom > 0 || tempFile.exists()) {
-                if (!tempFile.delete()) throw IllegalStateException("无法清理旧的下载缓存: ${tempFile.name}")
-            }
-            resumeFrom = 0L
-        }
-
-        val channel = response.bodyAsChannel()
-        val startedAt = System.currentTimeMillis()
-        java.io.RandomAccessFile(tempFile, "rw").use { raf ->
-            raf.seek(resumeFrom)
-            val buffer = ByteArray(64 * 1024)
-            var written = resumeFrom
-            while (true) {
-                val read = channel.readAvailable(buffer, 0, buffer.size)
-                if (read == -1) break
-                if (read > 0) {
-                    raf.write(buffer, 0, read)
-                    written += read
+            when {
+                response.status.value == 416 -> {
+                    // Range 起点 >= 文件实际长度（如上次实际已下完）→ 清空重下
+                    FgoLogger.warn(tag, "线路 ${line.label} 返回 416，清空临时文件从头下载")
+                    if (!tempFile.delete()) throw IllegalStateException("无法清理旧的下载缓存: ${tempFile.name}")
+                    resumeFrom = 0L
+                    continue
                 }
-                val elapsedSec = ((System.currentTimeMillis() - startedAt) / 1000).coerceAtLeast(1)
-                val speed = (written - resumeFrom) / elapsedSec.toFloat()
-                val percent = ((written * 100) / expectedBytes).toInt().coerceIn(0, 94)
-                onProgress(percent, "下载中 ${formatMb(written)} · ${formatMb(speed.toLong())}/s")
+                !response.status.isSuccess() -> {
+                    throw IllegalStateException("下载失败 HTTP ${response.status.value}")
+                }
             }
+
+            // 用响应头确定真实总大小（比清单估算值可靠）
+            val totalSize = response.headers[HttpHeaders.ContentRange]
+                ?.substringAfter('/')?.trim()?.toLongOrNull()
+                ?: response.headers[HttpHeaders.ContentLength]?.toLongOrNull()
+            // 服务器忽略 Range 返回 200 全量 → 从头覆盖
+            val resumed = response.status.value == 206 && resumeFrom > 0
+            if (!resumed) {
+                if (resumeFrom > 0 || tempFile.exists()) {
+                    if (!tempFile.delete()) throw IllegalStateException("无法清理旧的下载缓存: ${tempFile.name}")
+                }
+                resumeFrom = 0L
+            }
+
+            val channel = response.bodyAsChannel()
+            val startedAt = System.currentTimeMillis()
+            java.io.RandomAccessFile(tempFile, "rw").use { raf ->
+                raf.seek(resumeFrom)
+                val buffer = ByteArray(64 * 1024)
+                var written = resumeFrom
+                while (true) {
+                    val read = channel.readAvailable(buffer, 0, buffer.size)
+                    if (read == -1) break
+                    if (read > 0) {
+                        raf.write(buffer, 0, read)
+                        written += read
+                    }
+                    val elapsedSec = ((System.currentTimeMillis() - startedAt) / 1000).coerceAtLeast(1)
+                    val speed = (written - resumeFrom) / elapsedSec.toFloat()
+                    val percent = ((written * 100) / expectedBytes).toInt().coerceIn(0, 94)
+                    onProgress(percent, "下载中 ${formatMb(written)} · ${formatMb(speed.toLong())}/s")
+                }
+            }
+
+            val downloaded = tempFile.length()
+            if (totalSize != null && downloaded < totalSize) {
+                // 提前断流：保留断点，抛错让上层切换线路
+                throw IOException(
+                    "下载不完整：期望 ${formatMb(totalSize)}，实际 ${formatMb(downloaded)}（断点已保留，将自动续传）"
+                )
+            }
+            FgoLogger.info(tag, "模型下载完成: $downloaded bytes (预期 ${totalSize ?: "未知"})")
+            break
         }
-        if (tempFile.length() < expectedBytes) {
-            throw IOException(
-                "下载不完整：期望 ${formatMb(expectedBytes)}，实际 ${formatMb(tempFile.length())}，请重试（会自动续传）"
-            )
-        }
-        FgoLogger.info(tag, "模型下载完成: ${tempFile.length()} bytes")
 
         try {
             val installed = installFromArchive(
@@ -579,7 +694,7 @@ class SherpaOnnxModelRegistry @Inject constructor(
             settingsRepository.setSherpaSelectedModel(manifest.modelId)
             installed
         } finally {
-            // 安装成功/失败都清理临时文件（安装失败重试从头下载；断点文件仅在中途失败时保留）
+            // 安装成功/失败都清理临时文件
             runCatching { tempFile.delete() }
         }
     }

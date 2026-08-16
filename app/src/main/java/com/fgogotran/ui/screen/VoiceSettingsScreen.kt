@@ -59,6 +59,8 @@ import com.fgogotran.voice.AiVoiceService
 import com.fgogotran.voice.SherpaOnnxModelManifest
 import com.fgogotran.voice.SherpaOnnxModelRegistry
 import com.fgogotran.voice.TtsTestResult
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -116,6 +118,11 @@ fun VoiceSettingsScreen(
     var modelMessage by remember { mutableStateOf("") }
     var modelMessageIsError by remember { mutableStateOf(false) }
 
+    // 加速线路（测速 / 切换）
+    var selectedProxyPrefix by remember { mutableStateOf("") }
+    var proxySpeeds by remember { mutableStateOf<Map<String, SherpaOnnxModelRegistry.ProxySpeedResult>>(emptyMap()) }
+    var testingProxySpeed by remember { mutableStateOf(false) }
+
     val isAzureTtsProvider = ttsProvider == SettingsRepository.TTS_PROVIDER_AZURE
     val isSherpaTtsProvider = ttsProvider == SettingsRepository.TTS_PROVIDER_SHERPA_ONNX
 
@@ -134,6 +141,7 @@ fun VoiceSettingsScreen(
         // 先确保 APK 内置模型已安装（幂等），再读取列表，UI 才能正确显示"已安装"
         sherpaOnnxModelRegistry.ensureAssetsModelsInstalled()
         selectedSherpaModelId = settingsRepository.sherpaSelectedModel.first().trim()
+        selectedProxyPrefix = settingsRepository.sherpaDownloadProxy.first().trim()
         installedSherpaModelIds = sherpaOnnxModelRegistry.listInstalled()
             .map { it.manifest.modelId }
             .toSet()
@@ -176,6 +184,39 @@ fun VoiceSettingsScreen(
                 downloadingModelId = null
             }
         )
+    }
+
+    fun selectProxyLine(line: SherpaOnnxModelRegistry.GhProxyLine) {
+        scope.launch {
+            settingsRepository.setSherpaDownloadProxy(line.prefix)
+            selectedProxyPrefix = line.prefix
+            modelMessage = "下载线路已切换为 ${line.label}，下次下载生效"
+            modelMessageIsError = false
+        }
+    }
+
+    fun testAllProxyLines() {
+        if (testingProxySpeed) return
+        testingProxySpeed = true
+        proxySpeeds = emptyMap()
+        modelMessage = "正在测速…"
+        modelMessageIsError = false
+        scope.launch {
+            // 用内置模型（zh-ll，官方 release 稳定存在）做探针
+            val probeUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-vits-zh-ll.tar.bz2"
+            val results = SherpaOnnxModelRegistry.GH_PROXY_LINES.map { line ->
+                async { sherpaOnnxModelRegistry.testProxySpeed(line, probeUrl) }
+            }.awaitAll()
+            proxySpeeds = results.associateBy { it.line.prefix }
+            val fastest = results.filter { it.success }.maxByOrNull { it.speedMBps }
+            modelMessage = if (fastest != null) {
+                "测速完成，最快：${fastest.line.label}（${"%.1f".format(fastest.speedMBps)} MB/s）"
+            } else {
+                "所有线路均不可用，请检查网络后重试"
+            }
+            modelMessageIsError = fastest == null
+            testingProxySpeed = false
+        }
     }
 
     fun selectSherpaModel(modelId: String) {
@@ -325,6 +366,44 @@ fun VoiceSettingsScreen(
                         }
                     }
                 )
+            }
+
+            VoiceSettingsCard(
+                title = "下载线路（GitHub 加速）",
+                body = "国内访问 GitHub 困难时自动走加速线路。可手动测速选择最快线路；下载失败会自动依次尝试其他线路并记住可用的。",
+                iconRes = R.drawable.ic_settings_voice
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        if (selectedProxyPrefix.isBlank()) "当前：自动选择" else "当前：${
+                            SherpaOnnxModelRegistry.GH_PROXY_LINES.firstOrNull { it.prefix == selectedProxyPrefix }?.label
+                                ?: selectedProxyPrefix
+                        }",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+                    OutlinedButton(
+                        onClick = { testAllProxyLines() },
+                        enabled = !testingProxySpeed
+                    ) {
+                        Text(if (testingProxySpeed) "测速中…" else "重新测速")
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                SherpaOnnxModelRegistry.GH_PROXY_LINES.forEach { line ->
+                    val result = proxySpeeds[line.prefix]
+                    ProxyLineRow(
+                        line = line,
+                        selected = line.prefix == selectedProxyPrefix,
+                        result = result,
+                        testing = testingProxySpeed,
+                        onClick = { selectProxyLine(line) }
+                    )
+                }
             }
 
             VoiceSettingsCard(
@@ -1014,6 +1093,67 @@ private fun VoiceReadTextOption(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (selected) 0.82f else 0.48f)
             )
+        }
+    }
+}
+
+@Composable
+private fun ProxyLineRow(
+    line: SherpaOnnxModelRegistry.GhProxyLine,
+    selected: Boolean,
+    result: SherpaOnnxModelRegistry.ProxySpeedResult?,
+    testing: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = !testing) { onClick() },
+        shape = MaterialTheme.shapes.small,
+        color = if (selected) {
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f)
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f)
+        }
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            RadioButton(
+                selected = selected,
+                onClick = null,
+                enabled = false
+            )
+            Text(
+                line.label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.86f),
+                modifier = Modifier.weight(1f)
+            )
+            when {
+                testing -> Text(
+                    "测速中…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                )
+                result == null -> Text(
+                    "未测速",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                )
+                result.success -> Text(
+                    "${"%.1f".format(result.speedMBps)} MB/s · ${result.latencyMs / 1000}s",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
+                )
+                else -> Text(
+                    "不可用",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
         }
     }
 }

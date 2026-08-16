@@ -91,6 +91,7 @@ class SettingsRepository @Inject constructor(
         val KEY_TTS_PROVIDER = stringPreferencesKey("tts_provider")
         val KEY_SHERPA_SELECTED_MODEL = stringPreferencesKey("sherpa_selected_model")
         val KEY_SHERPA_SELECTED_SPEAKER = intPreferencesKey("sherpa_selected_speaker")
+        val KEY_SHERPA_DOWNLOAD_PROXY = stringPreferencesKey("sherpa_download_proxy")
 
         // ---- TTS Provider IDs ----
         const val TTS_PROVIDER_AZURE = "azure"
@@ -483,6 +484,13 @@ class SettingsRepository @Inject constructor(
         prefs[KEY_SHERPA_SELECTED_SPEAKER] ?: 0
     }
 
+    /** 模型下载使用的加速线路前缀（空 = 自动测速选择）。 */
+    val sherpaDownloadProxy: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_SHERPA_DOWNLOAD_PROXY].orEmpty()
+    }
+
+    suspend fun getSherpaDownloadProxy(): String = sherpaDownloadProxy.first()
+
     /** Master voice used when reading choice text. */
     val aiVoiceMasterVoice: Flow<String> = context.dataStore.data.map { prefs ->
         normalizeAiVoiceMasterVoice(prefs[KEY_AI_VOICE_MASTER_VOICE] ?: DEFAULT_AI_VOICE_MASTER_VOICE)
@@ -833,6 +841,11 @@ class SettingsRepository @Inject constructor(
         val safe = speakerId.coerceAtLeast(0)
         context.dataStore.edit { it[KEY_SHERPA_SELECTED_SPEAKER] = safe }
         FgoLogger.debug(tag, "Setting updated: sherpa_selected_speaker=$safe")
+    }
+
+    suspend fun setSherpaDownloadProxy(prefix: String) {
+        context.dataStore.edit { it[KEY_SHERPA_DOWNLOAD_PROXY] = prefix.trim() }
+        FgoLogger.debug(tag, "Setting updated: sherpa_download_proxy=${prefix.trim()}")
     }
 
     suspend fun setAiVoiceMasterVoice(masterVoice: String) {
