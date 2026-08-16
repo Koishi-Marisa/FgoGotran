@@ -268,12 +268,10 @@ fun SettingsScreen(
                 OcrEngineOption(
                     iconRes = R.drawable.ic_paddleocr_mark,
                     title = "PaddleOCR",
-                    body = "进阶引擎。准确度高，识别范围广。依赖 CPU 算力。",
-                    selected = ocrEngine == SettingsRepository.OCR_ENGINE_PADDLE,
-                    onClick = {
-                        ocrEngine = SettingsRepository.OCR_ENGINE_PADDLE
-                        scope.launch { settingsRepository.setOcrEngine(SettingsRepository.OCR_ENGINE_PADDLE) }
-                    }
+                    body = "暂不可用：其 ONNX Runtime 与本地 TTS 内置版本冲突会导致崩溃，已自动回退 ML Kit。",
+                    selected = false,
+                    enabled = false,
+                    onClick = {}
                 )
             }
 
@@ -642,12 +640,13 @@ private fun OcrEngineOption(
     title: String,
     body: String,
     selected: Boolean,
+    enabled: Boolean = true,
     onClick: () -> Unit
 ) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick),
         shape = MaterialTheme.shapes.small,
         color = if (selected) {
             MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.48f)
@@ -660,7 +659,7 @@ private fun OcrEngineOption(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            RadioButton(selected = selected, onClick = onClick)
+            RadioButton(selected = selected, onClick = onClick, enabled = enabled)
             Image(
                 painter = painterResource(id = iconRes),
                 contentDescription = null,
@@ -670,7 +669,12 @@ private fun OcrEngineOption(
                 Text(
                     title,
                     style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (enabled) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+                    }
                 )
                 Text(
                     body,

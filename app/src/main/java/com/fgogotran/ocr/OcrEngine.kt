@@ -106,12 +106,7 @@ class OcrEngine @Inject constructor(
     private suspend fun selectedProviderLocked(): OcrProvider {
         val requestedEngine = settingsRepository.getOcrEngine()
         val mlKitScript = if (requestedEngine == SettingsRepository.OCR_ENGINE_MLKIT) {
-            val gameServer = SettingsRepository.normalizeGameServer(settingsRepository.getGameServer())
-            if (gameServer == SettingsRepository.GAME_SERVER_JP) {
-                MlKitOcrScript.JAPANESE
-            } else {
-                MlKitOcrScript.CHINESE
-            }
+            defaultMlKitScript()
         } else {
             null
         }
@@ -124,20 +119,52 @@ class OcrEngine @Inject constructor(
         }
 
         existingProvider?.close()
-        val nextProvider = when (requestedEngine) {
-            SettingsRepository.OCR_ENGINE_PADDLE -> PaddleOcrProvider(appContext)
-            else -> MlKitOcrProvider(mlKitScript ?: MlKitOcrScript.JAPANESE)
+        val nextProvider: OcrProvider
+        val effectiveEngine: String
+        if (requestedEngine == SettingsRepository.OCR_ENGINE_PADDLE) {
+            // PaddleOCR 使用 Microsoft ONNX Runtime，与本 App 内置的 Sherpa-ONNX
+            // 精简版 libonnxruntime.so 不兼容（缺少 PP-OCRv6 所需算子），初始化即 native
+            // 崩溃且无法 try/catch，导致选择后应用反复崩溃。当前版本暂时回退 ML Kit，
+            // 不再加载 Paddle 的 native 库（含启动 warmUp），保证应用稳定运行。
+            effectiveEngine = SettingsRepository.OCR_ENGINE_MLKIT
+            val fallbackScript = defaultMlKitScript()
+            nextProvider = MlKitOcrProvider(fallbackScript)
+            diagnosticEventStore.record(
+                level = DiagnosticEventStore.LEVEL_WARNING,
+                category = DiagnosticEventStore.CATEGORY_OCR,
+                eventId = "paddle_ocr_unavailable",
+                title = "PaddleOCR 暂不可用，已回退 ML Kit",
+                message = "PaddleOCR 依赖的 ONNX Runtime 与本地 TTS 内置版本冲突，初始化会崩溃，已自动改用 ML Kit",
+                detail = "fallback=${SettingsRepository.ocrEngineDisplayName(effectiveEngine)} (${fallbackScript.modelLabel})"
+            )
+            FgoLogger.warn(
+                tag,
+                "PaddleOCR unavailable (ONNX Runtime conflict with Sherpa TTS); " +
+                    "falling back to ML Kit (${fallbackScript.modelLabel})"
+            )
+        } else {
+            effectiveEngine = requestedEngine
+            nextProvider = MlKitOcrProvider(mlKitScript ?: MlKitOcrScript.JAPANESE)
         }
         activeEngine = providerKey
         activeProvider = nextProvider
         val displayName = mlKitScript
-            ?.let { "${SettingsRepository.ocrEngineDisplayName(requestedEngine)} (${it.modelLabel})" }
-            ?: SettingsRepository.ocrEngineDisplayName(requestedEngine)
+            ?.let { "${SettingsRepository.ocrEngineDisplayName(effectiveEngine)} (${it.modelLabel})" }
+            ?: SettingsRepository.ocrEngineDisplayName(effectiveEngine)
         FgoLogger.info(
             tag,
             "OCR engine selected: $displayName"
         )
         return nextProvider
+    }
+
+    private suspend fun defaultMlKitScript(): MlKitOcrScript {
+        val gameServer = SettingsRepository.normalizeGameServer(settingsRepository.getGameServer())
+        return if (gameServer == SettingsRepository.GAME_SERVER_JP) {
+            MlKitOcrScript.JAPANESE
+        } else {
+            MlKitOcrScript.CHINESE
+        }
     }
 
     private fun recordOcrFailure(
