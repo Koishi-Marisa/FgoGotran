@@ -55,7 +55,6 @@ import com.fgogotran.R
 import com.fgogotran.data.SettingsRepository
 import com.fgogotran.translation.Translator
 import com.fgogotran.translation.VoiceLineHint
-import com.fgogotran.util.FgoLogger
 import com.fgogotran.voice.AiVoiceService
 import com.fgogotran.voice.SherpaOnnxModelManifest
 import com.fgogotran.voice.SherpaOnnxModelRegistry
@@ -144,8 +143,7 @@ fun VoiceSettingsScreen(
         }
     }
 
-    suspend fun refreshSherpaModelState() {
-        sherpaOnnxModelRegistry.ensureAssetsModelsInstalled()
+    fun refreshSherpaModelState() {
         installedSherpaModelIds = sherpaOnnxModelRegistry.listInstalled()
             .map { it.manifest.modelId }
             .toSet()
@@ -153,29 +151,31 @@ fun VoiceSettingsScreen(
 
     fun downloadSherpaModel(manifest: SherpaOnnxModelManifest) {
         if (downloadingModelId != null) return
-        scope.launch {
-            downloadingModelId = manifest.modelId
-            downloadProgress = 0
-            modelMessage = ""
-            modelMessageIsError = false
-            try {
-                sherpaOnnxModelRegistry.downloadAndInstall(manifest) { percent, message ->
-                    downloadProgress = percent
-                    modelMessage = message
-                }
+        downloadingModelId = manifest.modelId
+        downloadProgress = 0
+        modelMessage = ""
+        modelMessageIsError = false
+        // 下载在应用级作用域执行：切后台 / 离开页面也不会中断；失败自动保留断点可续传
+        sherpaOnnxModelRegistry.downloadAndInstallAsync(
+            manifest = manifest,
+            onProgress = { percent, message ->
+                downloadProgress = percent
+                modelMessage = message
+            },
+            onSuccess = {
                 selectedSherpaModelId = manifest.modelId
                 refreshSherpaModelState()
                 modelMessage = "「${manifest.displayName}」下载并安装完成，已切换为当前模型"
                 modelMessageIsError = false
-                runCatching { aiVoiceService.warmUpCurrentProvider() }
-            } catch (e: Throwable) {
-                FgoLogger.warn("VoiceSettings", "本地模型下载失败 ${manifest.modelId}: ${e.message}", e)
+                scope.launch { runCatching { aiVoiceService.warmUpCurrentProvider() } }
+                downloadingModelId = null
+            },
+            onError = { msg ->
                 modelMessageIsError = true
-                modelMessage = "下载失败：${e.message.orEmpty().take(96)}"
-            } finally {
+                modelMessage = "下载失败：$msg"
                 downloadingModelId = null
             }
-        }
+        )
     }
 
     fun selectSherpaModel(modelId: String) {

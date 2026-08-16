@@ -9,17 +9,25 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsChannel
+import io.ktor.http.HttpHeaders
 import io.ktor.http.isSuccess
 import io.ktor.utils.io.readAvailable
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.IOException
+import java.net.SocketTimeoutException
 import java.security.MessageDigest
 import java.util.Locale
 import java.util.zip.ZipInputStream
@@ -55,13 +63,16 @@ class SherpaOnnxModelRegistry @Inject constructor(
     private val modelsDir: File by lazy { File(rootDir, "models").also { it.mkdirs() } }
     private val registryFile: File by lazy { File(rootDir, "installed.json") }
 
+    /** 下载/安装协程作用域：应用级，不随 UI/页面销毁而取消。 */
+    private val downloadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     /** App 内下载用 HTTP 客户端（大文件不设请求超时）。 */
     private val httpClient: HttpClient by lazy {
         HttpClient {
             install(HttpTimeout) {
                 connectTimeoutMillis = 10_000L
                 requestTimeoutMillis = Long.MAX_VALUE // 模型包可能数百 MB，不设整体超时
-                socketTimeoutMillis = 60_000L
+                socketTimeoutMillis = 300_000L // 5 分钟无数据才判定超时（慢网下大文件下载）
             }
         }
     }
@@ -451,12 +462,32 @@ class SherpaOnnxModelRegistry @Inject constructor(
      * 从 [manifest.downloadUrl] 流式下载模型压缩包并安装（App 内下载）。
      * 下载成功后自动把该模型设为用户选择。
      *
-     * 国内访问 GitHub 困难时，下载 URL 会自动经过 ghfast.top 加速代理，
-     * 无需用户手动配置。
+     * 在应用级协程作用域执行：不随 UI / 页面销毁而取消，切后台也能继续下载。
+     * 国内访问 GitHub 困难时，下载 URL 会自动经过 ghfast.top 加速代理。
+     * 支持断点续传：下载中断后保留临时文件，重试时从断点继续。
      *
      * @param onProgress 进度回调（percent 0..100，message 为阶段描述，可在 UI 展示）
+     * @param onSuccess  安装成功回调（模型已被设为当前选择）
+     * @param onError    失败回调（message 为可直接展示的错误描述）
      */
-    suspend fun downloadAndInstall(
+    fun downloadAndInstallAsync(
+        manifest: SherpaOnnxModelManifest,
+        onProgress: (percent: Int, message: String) -> Unit,
+        onSuccess: (InstalledSherpaModel) -> Unit,
+        onError: (String) -> Unit
+    ): Job = downloadScope.launch {
+        try {
+            val installed = downloadAndInstallInternal(manifest, onProgress)
+            onSuccess(installed)
+        } catch (e: Throwable) {
+            val msg = describeDownloadError(e)
+            FgoLogger.warn(tag, "模型下载失败 ${manifest.modelId}: $msg", e)
+            diagnosticEventStore.record("warn", "voice", "tts_model_download_failed", "TTS 模型下载失败", msg.take(160))
+            onError(msg)
+        }
+    }
+
+    private suspend fun downloadAndInstallInternal(
         manifest: SherpaOnnxModelManifest,
         onProgress: (percent: Int, message: String) -> Unit
     ): InstalledSherpaModel = withContext(Dispatchers.IO) {
@@ -475,33 +506,64 @@ class SherpaOnnxModelRegistry @Inject constructor(
         }
 
         val downloadDir = File(rootDir, "downloads").apply { mkdirs() }
-        val tempFile = File(downloadDir, "${manifest.modelId}.tar.bz2.download")
-        if (tempFile.exists() && !tempFile.delete()) {
-            throw IllegalStateException("无法清理旧的下载缓存: ${tempFile.name}")
-        }
+        val tempFile = File(downloadDir, "${manifest.modelId}.tar.bz2")
 
         val actualUrl = proxyDownloadUrl(manifest.downloadUrl)
-        FgoLogger.info(tag, "开始下载模型 ${manifest.modelId} <- $actualUrl")
-        onProgress(1, "连接服务器")
-        val response = httpClient.get(actualUrl)
+        val expectedBytes = manifest.archiveSizeBytes.coerceAtLeast(1L)
+        var resumeFrom = 0L
+        if (tempFile.exists() && tempFile.length() in 1 until expectedBytes) {
+            // 上次下载中断留下的部分文件 → 断点续传
+            resumeFrom = tempFile.length()
+            FgoLogger.info(tag, "断点续传 ${manifest.modelId}：已有 ${formatMb(resumeFrom)}")
+        } else if (tempFile.exists()) {
+            // 文件已完整（异常残留）或长度非法 → 从头再来
+            if (!tempFile.delete()) throw IllegalStateException("无法清理旧的下载缓存: ${tempFile.name}")
+        }
+
+        FgoLogger.info(tag, "开始下载模型 ${manifest.modelId} <- $actualUrl" +
+            (if (resumeFrom > 0) " (从 ${formatMb(resumeFrom)} 续传)" else ""))
+        onProgress(1, if (resumeFrom > 0) "连接服务器（续传）" else "连接服务器")
+        val request: suspend () -> HttpResponse = {
+            httpClient.get(actualUrl) {
+                if (resumeFrom > 0) header(HttpHeaders.Range, "bytes=$resumeFrom-")
+            }
+        }
+        val response = request()
         if (!response.status.isSuccess()) {
             throw IllegalStateException("下载失败 HTTP ${response.status.value}")
         }
-        val expectedBytes = manifest.archiveSizeBytes.coerceAtLeast(1L)
+        // 仅当服务器确认断点续传（206）时保留已下载部分；否则（200 全量）清空重下
+        val resumed = response.status.value == 206 && resumeFrom > 0
+        if (!resumed) {
+            if (resumeFrom > 0 || tempFile.exists()) {
+                if (!tempFile.delete()) throw IllegalStateException("无法清理旧的下载缓存: ${tempFile.name}")
+            }
+            resumeFrom = 0L
+        }
+
         val channel = response.bodyAsChannel()
-        tempFile.outputStream().buffered().use { output ->
+        val startedAt = System.currentTimeMillis()
+        java.io.RandomAccessFile(tempFile, "rw").use { raf ->
+            raf.seek(resumeFrom)
             val buffer = ByteArray(64 * 1024)
-            var written = 0L
+            var written = resumeFrom
             while (true) {
                 val read = channel.readAvailable(buffer, 0, buffer.size)
                 if (read == -1) break
                 if (read > 0) {
-                    output.write(buffer, 0, read)
+                    raf.write(buffer, 0, read)
                     written += read
                 }
+                val elapsedSec = ((System.currentTimeMillis() - startedAt) / 1000).coerceAtLeast(1)
+                val speed = (written - resumeFrom) / elapsedSec.toFloat()
                 val percent = ((written * 100) / expectedBytes).toInt().coerceIn(0, 94)
-                onProgress(percent, "下载中 ${formatMb(written)}")
+                onProgress(percent, "下载中 ${formatMb(written)} · ${formatMb(speed.toLong())}/s")
             }
+        }
+        if (tempFile.length() < expectedBytes) {
+            throw IOException(
+                "下载不完整：期望 ${formatMb(expectedBytes)}，实际 ${formatMb(tempFile.length())}，请重试（会自动续传）"
+            )
         }
         FgoLogger.info(tag, "模型下载完成: ${tempFile.length()} bytes")
 
@@ -517,7 +579,20 @@ class SherpaOnnxModelRegistry @Inject constructor(
             settingsRepository.setSherpaSelectedModel(manifest.modelId)
             installed
         } finally {
+            // 安装成功/失败都清理临时文件（安装失败重试从头下载；断点文件仅在中途失败时保留）
             runCatching { tempFile.delete() }
+        }
+    }
+
+    /** 把下载异常转成用户可读的错误描述。 */
+    private fun describeDownloadError(e: Throwable): String {
+        return when (e) {
+            is SocketTimeoutException -> "下载超时：网络中断或速度过慢，请重试（会从断点继续）"
+            is java.util.concurrent.TimeoutException -> "下载超时：网络中断或速度过慢，请重试"
+            is IOException -> "网络错误：${e.message.orEmpty().take(120)}，请重试（会从断点继续）"
+            is SecurityException -> "校验失败：${e.message.orEmpty().take(120)}"
+            is IllegalStateException -> e.message.orEmpty().take(160)
+            else -> "${e.javaClass.simpleName}：${e.message.orEmpty().take(120)}"
         }
     }
 
