@@ -430,8 +430,29 @@ class SherpaOnnxModelRegistry @Inject constructor(
     }
 
     /**
+     * 国内访问 GitHub 困难时使用的下载加速代理前缀。
+     * 格式：在原始 GitHub URL 前拼接该前缀即可。
+     */
+    private val ghProxyPrefix: String = "https://ghfast.top/"
+
+    /** 对 GitHub 下载 URL 应用加速代理（非 GitHub 的 URL 保持不变）。 */
+    private fun proxyDownloadUrl(originalUrl: String): String {
+        return if (originalUrl.startsWith("https://github.com/") ||
+            originalUrl.startsWith("https://raw.githubusercontent.com/") ||
+            originalUrl.startsWith("https://objects.githubusercontent.com/")
+        ) {
+            ghProxyPrefix + originalUrl
+        } else {
+            originalUrl
+        }
+    }
+
+    /**
      * 从 [manifest.downloadUrl] 流式下载模型压缩包并安装（App 内下载）。
      * 下载成功后自动把该模型设为用户选择。
+     *
+     * 国内访问 GitHub 困难时，下载 URL 会自动经过 ghfast.top 加速代理，
+     * 无需用户手动配置。
      *
      * @param onProgress 进度回调（percent 0..100，message 为阶段描述，可在 UI 展示）
      */
@@ -459,9 +480,10 @@ class SherpaOnnxModelRegistry @Inject constructor(
             throw IllegalStateException("无法清理旧的下载缓存: ${tempFile.name}")
         }
 
-        FgoLogger.info(tag, "开始下载模型 ${manifest.modelId} <- ${manifest.downloadUrl}")
+        val actualUrl = proxyDownloadUrl(manifest.downloadUrl)
+        FgoLogger.info(tag, "开始下载模型 ${manifest.modelId} <- $actualUrl")
         onProgress(1, "连接服务器")
-        val response = httpClient.get(manifest.downloadUrl)
+        val response = httpClient.get(actualUrl)
         if (!response.status.isSuccess()) {
             throw IllegalStateException("下载失败 HTTP ${response.status.value}")
         }
