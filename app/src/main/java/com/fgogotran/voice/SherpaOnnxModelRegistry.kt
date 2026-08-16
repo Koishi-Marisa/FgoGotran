@@ -182,20 +182,20 @@ class SherpaOnnxModelRegistry @Inject constructor(
             displayName = "多语言高音质 (Kokoro-82M v1.1 · FP32)",
             modelType = SherpaModelType.KOKORO_82M,
             language = "multi",
-            speakerCount = 100,
+            speakerCount = 103,
             sampleRate = 24000,
             downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_1.tar.bz2",
             archiveSizeBytes = 348L * 1024 * 1024,
             unpackedSizeBytes = 850L * 1024 * 1024,
             sha256 = "",
-            notes = "Kokoro 官方 v1.1 FP32，50+ 语言 100 音色，质量接近商业 TTS；体积大（~348MB），高端机推荐"
+            notes = "Kokoro 官方 v1.1 FP32，103 音色含中文女声 zf_* / 男声 zm_*（3~102），音质接近商业 TTS；体积大（~348MB），高端机推荐"
         ),
         SherpaOnnxModelManifest(
             modelId = "kokoro-multi-v1_1-int8",
             displayName = "多语言高音质 (Kokoro-82M v1.1 · INT8 量化)",
             modelType = SherpaModelType.KOKORO_82M,
             language = "multi",
-            speakerCount = 100,
+            speakerCount = 103,
             sampleRate = 24000,
             downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_1.tar.bz2",
             archiveSizeBytes = 140L * 1024 * 1024,
@@ -208,13 +208,13 @@ class SherpaOnnxModelRegistry @Inject constructor(
             displayName = "多语言高音质 (Kokoro-82M v1.0 · FP32)",
             modelType = SherpaModelType.KOKORO_82M,
             language = "multi",
-            speakerCount = 90,
+            speakerCount = 53,
             sampleRate = 24000,
             downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2",
             archiveSizeBytes = 333L * 1024 * 1024,
             unpackedSizeBytes = 800L * 1024 * 1024,
             sha256 = "",
-            notes = "Kokoro v1.0 老版，兼容性更好"
+            notes = "Kokoro v1.0 老版（53 音色），兼容性更好"
         )
     )
 

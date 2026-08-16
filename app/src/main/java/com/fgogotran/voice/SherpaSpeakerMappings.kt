@@ -41,9 +41,12 @@ class SherpaSpeakerMappings @Inject constructor() {
         val byModel = when (installed.manifest.modelId) {
             FANCHEN_C_MODEL_ID -> fgoRoleToFanchenC[normalizedSpeaker]
             ZH_LL_MODEL_ID -> fgoRoleToZhLl[normalizedSpeaker]
-            KOKORO_MODEL_ID_V10,
+            // Kokoro v1.1（103 音色）已重排 speaker：前段是英文音色，3~57 为中文女声
+            // zf_*、58~102 为中文男声 zm_*，v1.0 的角色映射表不再适用，
+            // 统一交给「性别感知选择」在 zf_/zm_ 池内稳定分配。
             KOKORO_MODEL_ID_V11,
-            KOKORO_MODEL_ID_V11_INT8,
+            KOKORO_MODEL_ID_V11_INT8 -> null
+            KOKORO_MODEL_ID_V10,
             KOKORO_MODEL_ID_LEGACY -> fgoRoleToKokoro[normalizedSpeaker]
             // 所有单 speaker 模型统一 0（Piper 中文 + 单角色 VITS）
             PIPER_ZH_HUAYAN,
@@ -294,20 +297,22 @@ class SherpaSpeakerMappings @Inject constructor() {
     private fun genderSidSets(modelId: String, speakerCount: Int): GenderSidSet? = when (modelId) {
         // zh-ll 5 speaker 性别经基频实测：0/2/3 女声，1/4 男声
         ZH_LL_MODEL_ID -> GenderSidSet(femaleSids = listOf(0, 2, 3), maleSids = listOf(1, 4))
+        // Kokoro v1.0/legacy：53 个 speaker，按官方命名段划分（af_/am_/bf_/bm_...）
         KOKORO_MODEL_ID_V10,
+        KOKORO_MODEL_ID_LEGACY -> kokoroV10GenderSidSet(speakerCount)
+        // Kokoro v1.1：103 个 speaker，重新排序后 0~2 为英文女声（af_maple/af_sol/bf_vale），
+        // 3~57 为中文女声 zf_*，58~102 为中文男声 zm_*（经实际加载 voices.bin 确认）。
         KOKORO_MODEL_ID_V11,
-        KOKORO_MODEL_ID_V11_INT8,
-        KOKORO_MODEL_ID_LEGACY -> kokoroGenderSidSet(speakerCount)
+        KOKORO_MODEL_ID_V11_INT8 -> kokoroV11GenderSidSet(speakerCount)
         else -> null
     }
 
     /**
-     * Kokoro 官方 voices 命名规则：`<2字母><性别>_<名字>`，
+     * Kokoro v1.0（53 speaker）官方 voices 命名规则：`<2字母><性别>_<名字>`，
      * f = female（af_/bf_/ef_/ff_/hf_/if_/jf_/pf_/zf_），m = male（am_/bm_/em_/hm_/im_/jm_/pm_/zm_）。
-     * v1.0 有 53 个 speaker，顺序固定；v1.1 在此基础上向后扩展（前 53 个顺序保持一致）。
-     * 这里只认 v1.0 已确认的前 53 个段，超出范围（未知性别）不计入集合。
+     * 顺序固定（0..52），此处只认已确认的 53 个段，超出范围不计入集合。
      */
-    private fun kokoroGenderSidSet(speakerCount: Int): GenderSidSet {
+    private fun kokoroV10GenderSidSet(speakerCount: Int): GenderSidSet {
         data class Seg(val start: Int, val end: Int, val female: Boolean)
         val segments = listOf(
             Seg(0, 10, true), Seg(11, 19, false), Seg(20, 23, true), Seg(24, 27, false),
@@ -326,6 +331,18 @@ class SherpaSpeakerMappings @Inject constructor() {
             }
         }
         return GenderSidSet(female, male)
+    }
+
+    /**
+     * Kokoro v1.1（103 speaker，voices.bin 实测）：
+     *   sid 0..2   = af_maple / af_sol / bf_vale（英文女声，中文角色不使用）
+     *   sid 3..57  = zf_001..zf_099（中文女声）
+     *   sid 58..102 = zm_009..zm_100（中文男声）
+     */
+    private fun kokoroV11GenderSidSet(speakerCount: Int): GenderSidSet {
+        val female = (3..57).takeWhile { it < speakerCount }
+        val male = (58..102).takeWhile { it < speakerCount }
+        return GenderSidSet(femaleSids = female, maleSids = male)
     }
 
     /**
