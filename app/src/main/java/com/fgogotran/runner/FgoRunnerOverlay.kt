@@ -342,11 +342,8 @@ class FgoRunnerOverlay @Inject constructor(
             return
         }
 
-        if (!TranslationTrigger.canUserTapTranslate()) {
-            FgoLogger.debug(tag, "Floating button tap ignored while full auto translation is enabled")
-            return
-        }
-
+        // 全自动模式下同样允许点击悬浮窗手动朗读/翻译当前画面
+        // （requestManualTranslation 内部会区分自动/非自动路径）
         val requested = FgoAccessibilityService.instance
             ?.requestManualTranslation()
             ?: false

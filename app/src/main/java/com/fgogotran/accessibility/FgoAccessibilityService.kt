@@ -108,6 +108,8 @@ class FgoAccessibilityService : AccessibilityService() {
     private var lastSemiAutoRenderedStabilityKey = ""
     private var lastSemiAutoChoiceRenderedStabilityKey = ""
     private var lastAutoRenderedStabilityKey = ""
+    /** 自动后台无「完成标记」时的稳定文本兜底：记录上一轮 OCR 对话文本指纹 */
+    private var voiceOnlyFallbackPreviousFingerprint = ""
     private var autoScanReadyAt = 0L
     private var semiAutoBackgroundRetryAt = 0L
     private var semiAutoBlankOcrStreak = 0
@@ -627,6 +629,20 @@ class FgoAccessibilityService : AccessibilityService() {
     }
 
     fun requestManualTranslation(afterMenuDismiss: Boolean = false): Boolean {
+        // 全自动模式下用户点击悬浮窗：立即手动处理一帧（朗读当前画面），
+        // 不改变自动模式，也不与后台自动流程并发（isProcessing 互斥）。
+        if (TranslationTrigger.isAutoTranslateEnabled()) {
+            if (!canStartScreenTranslationNow()) {
+                FgoLogger.debug(tag, "Manual tap skipped while auto pipeline is busy")
+                return false
+            }
+            cropResultOverlay.hide()
+            startManualTranslation(
+                afterMenuDismiss = afterMenuDismiss,
+                requestedMode = TranslationMode.MANUAL
+            )
+            return true
+        }
         if (!TranslationTrigger.canUserTapTranslate()) return false
         cropResultOverlay.hide()
 
@@ -758,6 +774,7 @@ class FgoAccessibilityService : AccessibilityService() {
         lastSemiAutoRenderedStabilityKey = ""
         lastSemiAutoChoiceRenderedStabilityKey = ""
         lastAutoRenderedStabilityKey = ""
+        voiceOnlyFallbackPreviousFingerprint = ""
         failedAutoRenderFingerprint = ""
         failedAutoRenderRetryAt = 0L
         resetSemiAutoBackgroundState()
@@ -1282,19 +1299,33 @@ class FgoAccessibilityService : AccessibilityService() {
             source,
             screenRegions.dialogueComplete
         )
-        if (!dialogueComplete) {
+        if (dialogueComplete) {
+            val sceneSource = scanVoiceOnlyDialogueScene(source, screenRegions)
+            if (sceneSource == null && mode == ProcessingMode.SEMI_AUTO_BACKGROUND) {
+                rememberSemiAutoBlankOcr()
+            }
+            return sceneSource
+        }
+
+        // 完成标记不可见（部分设备/分辨率/游戏版本检测不到）时的兜底：
+        // 连续两轮 OCR 到相同的对话文本视为「文字已打完」，直接朗读，
+        // 保证自动/半自动后台模式不会因永远等不到标记而无法朗读。
+        val fallback = scanVoiceOnlyDialogueScene(source, screenRegions)
+        if (fallback == null) {
             if (mode == ProcessingMode.SEMI_AUTO_BACKGROUND) {
                 rememberSemiAutoBlankOcr()
             }
-            FgoLogger.debug(tag, "Voice-only waiting for completed dialogue marker")
+            voiceOnlyFallbackPreviousFingerprint = ""
             return null
         }
-
-        val sceneSource = scanVoiceOnlyDialogueScene(source, screenRegions)
-        if (sceneSource == null && mode == ProcessingMode.SEMI_AUTO_BACKGROUND) {
-            rememberSemiAutoBlankOcr()
+        val fingerprint = fallback.fingerprint
+        return if (fingerprint.isNotBlank() && fingerprint == voiceOnlyFallbackPreviousFingerprint) {
+            voiceOnlyFallbackPreviousFingerprint = ""
+            fallback
+        } else {
+            voiceOnlyFallbackPreviousFingerprint = fingerprint
+            null
         }
-        return sceneSource
     }
 
     private fun requestVoiceOnlyScene(sceneSource: SceneSource) {
@@ -1972,7 +2003,9 @@ class FgoAccessibilityService : AccessibilityService() {
 
     private fun isProcessingModeEnabled(mode: ProcessingMode): Boolean {
         return when (mode) {
-            ProcessingMode.MANUAL_TAP -> TranslationTrigger.canUserTapTranslate()
+            // MANUAL_TAP 由用户主动点击触发；全自动模式下同样允许（用于点击悬浮窗手动朗读当前画面）
+            ProcessingMode.MANUAL_TAP ->
+                TranslationTrigger.canUserTapTranslate() || TranslationTrigger.isAutoTranslateEnabled()
             ProcessingMode.SEMI_AUTO_CHOICE_TAP -> TranslationTrigger.isSemiAutoEnabled()
             ProcessingMode.SEMI_AUTO_BACKGROUND -> TranslationTrigger.isSemiAutoEnabled()
             ProcessingMode.AUTO_BACKGROUND -> TranslationTrigger.isAutoTranslateEnabled()
