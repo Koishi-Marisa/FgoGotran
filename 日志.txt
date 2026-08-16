@@ -1,0 +1,140 @@
+18:17:10.744 I FGO/DI: Providing LocalGlossaryDatabase
+18:17:10.745 I FGO/DI: Providing TermDatabase
+18:17:10.750 I FGO/TermDB: Term DB ready: character_names=855, terms=141, size=102400 bytes
+18:17:10.751 I FGO/DI: Providing TranslationCacheDb
+18:17:10.751 D FGO/Cache: Creating translation cache DB
+18:17:10.764 I FGO/MainActivity: MainActivity created
+18:17:10.775 I FGO/VoiceDataUpdate: Voice data update: skipped CDN check; checked recently
+18:17:10.775 I FGO/GlossaryUpdate: DB update: skipped CDN check; checked recently
+18:17:10.901 I FGO/AppVersion: Version check: skipped CDN check; checked recently
+18:17:40.103 D FGO/Settings: Setting updated: ocr_engine=mlkit
+18:17:48.107 I FGO/FGO/Font: Loaded story font: fonts/FgoStory.ttf
+18:17:48.131 I FGO/Overlay: Overlay initialized: 1200x2664
+18:17:48.131 I FGO/CropResultOverlay: Crop result overlay initialized
+18:17:48.134 I FGO/Accessibility: Gesture injection available: true
+18:17:48.134 I FGO/Accessibility: Service connected: 1200x2664
+18:17:48.135 D FGO/UserProfile: Player name: (empty)
+18:17:48.136 D FGO/Translator: Runtime config refreshed
+18:17:48.136 D FGO/Accessibility: Translation mode enabled: AUTO
+18:17:48.137 D FGO/Accessibility: Restored translation mode: AUTO
+18:17:48.141 D FGO/Translator: Term rows cached: 141
+18:17:48.141 I FGO/Accessibility: Game server mode changed: cn
+18:17:48.145 I FGO/OCR: OCR engine selected: ML Kit OCR (Chinese)
+18:17:48.145 D FGO/OCR: ML Kit Chinese OCR warm-up starting
+18:17:48.180 D FGO/Translator: Character names cached: 855 (local=0)
+18:17:48.295 I FGO/OCR: ML Kit Chinese OCR warm-up complete
+18:17:48.339 D FGO/Translator: Glossary terms cached: 991
+18:17:48.343 D FGO/Translator: Term lookup cached: 226
+18:17:48.529 D FGO/Translator: Character name variants cached: 879
+18:17:48.529 D FGO/Translator: Character name lookup cached: 879
+18:17:48.530 I FGO/Translator: Translator warm-up complete
+18:17:57.328 I FGO/SherpaTts: 加载 Sherpa 模型 vits-zh-ll
+18:18:00.828 I FGO/AiVoice: Sherpa voice test played speaker=玛修 voice=vits-zh-ll:0
+18:18:33.682 I FGO/FgoRunner: Service created
+18:18:33.690 I FGO/FgoRunnerOverlay: Overlay initialized
+18:18:33.700 D FGO/Accessibility: Translation mode enabled: AUTO
+18:18:33.700 D FGO/FgoRunnerOverlay: Runner restored translation mode: AUTO
+18:18:33.724 I FGO/FgoRunnerOverlay: Floating button shown at (8, 300)
+18:18:35.626 D FGO/Settings: Setting updated: floating_button_portrait=(8,300)
+18:18:35.627 I FGO/FgoRunnerOverlay: Floating button position restored for LANDSCAPE at (8, 300)
+18:18:36.213 D FGO/Accessibility: MANUAL_TAP requested while FGO foreground flag is stale; attempting capture
+18:18:36.292 D FGO/Accessibility: FGO viewport=Rect(265, 0 - 2399, 1200)
+18:18:36.304 D FGO/OCR: ML Kit Chinese OCR starting on 1970x348
+18:18:36.440 I FGO/OCR: ML Kit Chinese OCR complete: 3 lines, 22 chars, 136ms
+18:18:36.563 I FGO/BackgroundDetector: Choice zone detected 0 panels in Rect(510, 244 - 2143, 811) []
+18:18:36.565 I FGO/Accessibility: Voice-only pipeline ready (MANUAL_TAP): ocr=345ms
+18:18:36.781 I FGO/VoiceProfiles: Loaded voice data source=cdn_cache, profiles=491, nameMap=3413
+18:18:36.790 I FGO/AiVoice: Temp voice profile miss: server=cn speaker=方市
+18:18:36.792 D FGO/UserProfile: Player name: (empty)
+18:18:36.797 W FGO/LocalTtsVoiceBuilder: 本地语音档案 AI 分配失败: API Key is empty | API Key is empty
+18:18:36.798 W FGO/AiVoice: Local TTS voice assignment failed: server=cn speaker=方市 | Local TTS voice AI returned no result
+18:18:36.798 D FGO/AiVoice: AI voice profile speaker=方市 profile=local-fallback:cn:方市 voice=vits-zh-ll source=translated_chinese
+18:18:38.696 I FGO/SherpaTts: 本地合成完成: sid=0 rate=1.13 samples=38375 sr=16000 → d4258ac2569463c2de493601cc2040c0ec654b6bcb59edd25f64ac6bf9b43216.1786875516802.tmp
+18:18:52.484 D FGO/Settings: Setting updated: floating_button_landscape=(8,300)
+18:18:52.484 I FGO/FgoRunnerOverlay: Floating button position restored for PORTRAIT at (8, 300)
+18:19:47.159 I FGO/ApiSettings: API test started: backend=deepseek, model=deepseek-v4-flash, baseUrl=https://api.deepseek.com/v1/chat/completions, keyChars=35
+18:19:47.160 I FGO/Translator: API test config: backend=deepseek, model=deepseek-v4-flash, baseUrl=https://api.deepseek.com/v1/chat/completions, keyChars=35
+18:19:47.273 D FGO/PromptBuilder: Term matching: 2 of 991 terms matched
+18:19:47.273 D FGO/PromptBuilder: Matched terms: マスター->御主, カルデア->迦勒底
+18:19:47.273 D FGO/Translator: RAG source: leaving 2 matched glossary term(s) in original text
+18:19:47.282 D FGO/PromptBuilder: System prompt combination: format=plain_text, target=zh-Hans, blocks=base+plain_output+placeholder+official_terms+dialogue_style+master+katakana_style+terminology_table, rag=2, chars=1151
+18:19:47.282 D FGO/PromptBuilder: User prompt: 327 chars, choices=0
+18:19:47.282 D FGO/Translator: Prompt request: kind=api_test, backend=deepseek, model=deepseek-v4-flash, messages=2, systemChars=1151, userChars=327, totalChars=1478, maxTokens=96
+18:19:47.282 D FGO/Translator: DeepSeek request: model=deepseek-v4-flash, baseUrl=https://api.deepseek.com/v1/chat/completions, messages=2, maxTokens=96, thinkingDisabled=true, keyChars=35
+18:19:48.046 D FGO/Translator: DeepSeek API success: status=200, bodyChars=489
+18:19:48.047 D FGO/Translator: Prompt response: kind=api_test, backend=deepseek, elapsedMs=765, resultChars=27
+18:19:48.047 D FGO/Translator: API test model content: __FGOTERM_MASTER__，我们回迦勒底吧。
+18:19:48.048 D FGO/Translator: API test sanitized content: 御主，我们回迦勒底吧。
+18:19:48.049 I FGO/Translator: API test succeeded: backend=deepseek, model=deepseek-v4-flash, responseLen=11
+18:19:48.049 I FGO/ApiSettings: API test succeeded: backend=deepseek, model=deepseek-v4-flash, elapsedMs=890
+18:19:49.318 D FGO/Settings: API settings updated: backend=deepseek, model=deepseek-v4-flash, api_key=(redacted, 35 chars)
+18:19:54.014 D FGO/Settings: Setting updated: floating_button_portrait=(8,300)
+18:19:54.016 I FGO/FgoRunnerOverlay: Floating button position restored for LANDSCAPE at (8, 300)
+18:19:54.683 D FGO/Accessibility: MANUAL_TAP requested while FGO foreground flag is stale; attempting capture
+18:19:54.743 D FGO/Accessibility: FGO viewport=Rect(265, 0 - 2399, 1200)
+18:19:54.750 D FGO/OCR: ML Kit Chinese OCR starting on 1970x348
+18:19:54.825 I FGO/OCR: ML Kit Chinese OCR complete: 2 lines, 13 chars, 75ms
+18:19:54.941 I FGO/BackgroundDetector: Choice zone detected 0 panels in Rect(510, 244 - 2143, 811) []
+18:19:54.942 I FGO/Accessibility: Voice-only pipeline ready (MANUAL_TAP): ocr=251ms
+18:19:54.947 D FGO/AiVoice: AI voice profile speaker=卡多克 profile=カドック voice=zh-CN-Yunxi:DragonHDFlashLatestNeural source=translated_chinese
+18:19:56.387 I FGO/SherpaTts: 本地合成完成: sid=1 rate=1.18 samples=22778 sr=16000 → 3c7bd46cfb27149c80322dbbc88b25d4d4a0cd7dace6fb57726a14ff03ff4345.1786875594951.tmp
+18:19:59.963 D FGO/Accessibility: MANUAL_TAP requested while FGO foreground flag is stale; attempting capture
+18:20:00.010 D FGO/Accessibility: FGO viewport=Rect(265, 0 - 2399, 1200)
+18:20:00.015 D FGO/OCR: ML Kit Chinese OCR starting on 1970x348
+18:20:00.100 I FGO/OCR: ML Kit Chinese OCR complete: 2 lines, 13 chars, 84ms
+18:20:00.248 I FGO/BackgroundDetector: Choice zone detected 1 panels in Rect(510, 244 - 2143, 811) [510 382 2143 531]
+18:20:00.585 D FGO/BackgroundDetector: Fixed choice slot signature accepted: count=1, scores=[fixed(dark=0.99925613,top=0.6666667,bottom=0.0)/raw(dark=0.9714286,border=0.6666667,height=0.99333334,overlap=1.0)]
+18:20:00.585 D FGO/BackgroundDetector: Snapped choice panels to fixed FGO layout: raw=[510 382 2143 531] fixed=[510 381 2143 531]
+18:20:00.596 D FGO/OCR: ML Kit Chinese OCR starting on 1633x150
+18:20:00.661 I FGO/OCR: ML Kit Chinese OCR complete: 1 lines, 2 chars, 65ms
+18:20:00.675 I FGO/Accessibility: Voice-only pipeline ready (MANUAL_TAP): ocr=712ms
+18:20:00.680 D FGO/AiVoice: AI voice profile speaker=卡多克 profile=カドック voice=zh-CN-Yunxi:DragonHDFlashLatestNeural source=translated_chinese
+18:20:00.682 D FGO/AiVoice: AI voice duplicate skipped: speaker=卡多克
+18:20:00.687 D FGO/AiVoice: AI voice profile speaker=藤丸立香(女) profile=藤丸立香(女) voice=zh-CN-Xiaoyu:DragonHDFlashLatestNeural source=translated_chinese
+18:20:00.984 I FGO/SherpaTts: 本地合成完成: sid=0 rate=1.18 samples=2095 sr=16000 → e1305f3f1452c010c09b2b2a68fa0ef7571949ba0c4dcb7b688fbd4a6a717fc8.1786875600690.tmp
+18:20:05.173 D FGO/Accessibility: MANUAL_TAP requested while FGO foreground flag is stale; attempting capture
+18:20:05.231 D FGO/Accessibility: FGO viewport=Rect(265, 0 - 2399, 1200)
+18:20:05.236 D FGO/OCR: ML Kit Chinese OCR starting on 1970x348
+18:20:05.299 I FGO/OCR: ML Kit Chinese OCR complete: 2 lines, 13 chars, 63ms
+18:20:05.456 I FGO/BackgroundDetector: Choice zone detected 1 panels in Rect(510, 244 - 2143, 811) [510 382 2143 531]
+18:20:05.789 D FGO/BackgroundDetector: Fixed choice slot signature accepted: count=1, scores=[fixed(dark=0.99925613,top=0.6666667,bottom=0.0)/raw(dark=0.9714286,border=0.6666667,height=0.99333334,overlap=1.0)]
+18:20:05.789 D FGO/BackgroundDetector: Snapped choice panels to fixed FGO layout: raw=[510 382 2143 531] fixed=[510 381 2143 531]
+18:20:05.797 D FGO/OCR: ML Kit Chinese OCR starting on 1633x150
+18:20:05.843 I FGO/OCR: ML Kit Chinese OCR complete: 1 lines, 2 chars, 46ms
+18:20:05.860 D FGO/Accessibility: Voice-only source unchanged; waiting for new OCR text
+18:20:06.787 D FGO/Accessibility: MANUAL_TAP requested while FGO foreground flag is stale; attempting capture
+18:20:06.847 D FGO/Accessibility: FGO viewport=Rect(265, 0 - 2399, 1200)
+18:20:06.853 D FGO/OCR: ML Kit Chinese OCR starting on 1970x348
+18:20:06.949 I FGO/OCR: ML Kit Chinese OCR complete: 2 lines, 13 chars, 96ms
+18:20:07.085 I FGO/BackgroundDetector: Choice zone detected 1 panels in Rect(510, 244 - 2143, 811) [510 382 2143 531]
+18:20:07.420 D FGO/BackgroundDetector: Fixed choice slot signature accepted: count=1, scores=[fixed(dark=0.99925613,top=0.6666667,bottom=0.0)/raw(dark=0.9714286,border=0.6666667,height=0.99333334,overlap=1.0)]
+18:20:07.421 D FGO/BackgroundDetector: Snapped choice panels to fixed FGO layout: raw=[510 382 2143 531] fixed=[510 381 2143 531]
+18:20:07.430 D FGO/OCR: ML Kit Chinese OCR starting on 1633x150
+18:20:07.471 I FGO/OCR: ML Kit Chinese OCR complete: 1 lines, 2 chars, 41ms
+18:20:07.484 D FGO/Accessibility: Voice-only source unchanged; waiting for new OCR text
+18:20:08.852 D FGO/Settings: Setting updated: floating_button_landscape=(8,300)
+18:20:08.854 I FGO/FgoRunnerOverlay: Floating button position restored for PORTRAIT at (8, 300)
+18:20:37.498 D FGO/Settings: Setting updated: floating_button_portrait=(8,300)
+18:20:37.500 I FGO/FgoRunnerOverlay: Floating button position restored for LANDSCAPE at (8, 300)
+18:20:44.695 D FGO/Settings: Setting updated: floating_button_landscape=(8,300)
+18:20:44.699 I FGO/FgoRunnerOverlay: Floating button position restored for PORTRAIT at (8, 300)
+18:21:21.379 D FGO/Settings: Setting updated: floating_button_portrait=(8,300)
+18:21:21.381 I FGO/FgoRunnerOverlay: Floating button position restored for LANDSCAPE at (8, 300)
+18:21:22.134 D FGO/Accessibility: MANUAL_TAP requested while FGO foreground flag is stale; attempting capture
+18:21:22.180 D FGO/Accessibility: FGO viewport=Rect(265, 0 - 2399, 1200)
+18:21:22.186 D FGO/OCR: ML Kit Chinese OCR starting on 1970x348
+18:21:22.292 I FGO/OCR: ML Kit Chinese OCR complete: 2 lines, 7 chars, 106ms
+18:21:22.433 I FGO/BackgroundDetector: Choice zone detected 0 panels in Rect(510, 244 - 2143, 811) []
+18:21:22.435 I FGO/Accessibility: Voice-only pipeline ready (MANUAL_TAP): ocr=298ms
+18:21:22.445 D FGO/AiVoice: AI voice profile speaker=卡多克 profile=カドック voice=zh-CN-Yunxi:DragonHDFlashLatestNeural source=translated_chinese
+18:21:22.898 I FGO/SherpaTts: 本地合成完成: sid=1 rate=1.2 samples=7510 sr=16000 → c87bbd531aa1b368621a5ffc7fe4b9a81a919dc9e856fe8839d6846c599bae99.1786875682446.tmp
+18:21:31.385 D FGO/Accessibility: MANUAL_TAP requested while FGO foreground flag is stale; attempting capture
+18:21:31.454 D FGO/Accessibility: FGO viewport=Rect(265, 0 - 2399, 1200)
+18:21:31.462 D FGO/OCR: ML Kit Chinese OCR starting on 1970x348
+18:21:31.550 I FGO/OCR: ML Kit Chinese OCR complete: 2 lines, 25 chars, 88ms
+18:21:31.687 I FGO/BackgroundDetector: Choice zone detected 0 panels in Rect(510, 244 - 2143, 811) []
+18:21:31.689 I FGO/Accessibility: Voice-only pipeline ready (MANUAL_TAP): ocr=297ms
+18:21:31.697 D FGO/AiVoice: AI voice profile speaker=玛修 profile=マシュ voice=zh-CN-Xiaoxiao:DragonHDFlashLatestNeural source=translated_chinese
+18:21:33.901 I FGO/SherpaTts: 本地合成完成: sid=2 rate=1.22 samples=46083 sr=16000 → 419d61ad66a4beb629d01135ce4c4c04644b55b4f299774d2c2d84a68bcfe7da.1786875691702.tmp
+18:21:42.690 D FGO/Settings: Setting updated: floating_button_landscape=(8,300)
+18:21:42.696 I FGO/FgoRunnerOverlay: Floating button position restored for PORTRAIT at (8, 300)
