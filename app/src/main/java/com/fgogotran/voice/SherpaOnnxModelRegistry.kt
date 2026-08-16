@@ -856,7 +856,8 @@ class SherpaOnnxModelRegistry @Inject constructor(
      */
     private fun normalizeModelFile(dir: File) {
         val canonical = File(dir, "model.onnx")
-        if (canonical.isFile) return
+        // 已存在且非空（>0B）才算规范；0 字节的损坏文件继续走重命名修复
+        if (canonical.isFile && canonical.length() > 0) return
 
         // 排除 Matcha 的 vocoder（hifigan*.onnx / vocoder*.onnx），只挑主模型
         val candidates = dir.listFiles { f ->

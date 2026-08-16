@@ -228,14 +228,49 @@ class SherpaOnnxTtsProvider @Inject constructor(
             OfflineTts(config = config)
         } catch (e: Throwable) {
             // 常见于模型文件缺失/损坏（如包内文件名未规范为 model.onnx）
-            FgoLogger.error(tag, "创建 OfflineTts 失败（${installed.manifest.modelId}）: ${e.message}", e)
+            val diag = describeModelDir(installed.installDir)
+            FgoLogger.error(
+                tag,
+                "创建 OfflineTts 失败（${installed.manifest.modelId}）: ${e.message} | $diag",
+                e
+            )
+            runCatching {
+                diagnosticEventStore.record(
+                    level = "ERROR",
+                    category = "tts",
+                    eventId = "sherpa_create_failed",
+                    title = "本地 TTS 引擎创建失败",
+                    message = "模型 ${installed.manifest.modelId} 创建失败：${e.message.orEmpty().take(160)}",
+                    detail = diag,
+                    apiBackend = providerId,
+                    errorCode = e.javaClass.simpleName
+                )
+            }
             throw IllegalStateException(
                 "创建本地 TTS 引擎失败（${installed.manifest.modelId}）：${e.message}。" +
-                    "请在「语音设置」中卸载后重新下载该模型。",
+                    "请在「语音设置」中卸载后重新下载该模型。\n\n目录诊断：$diag",
                 e
             )
         }
         activeModelId = installed.manifest.modelId
+    }
+
+    /** 生成模型目录诊断文本（文件清单+大小），用于定位创建失败原因。 */
+    private fun describeModelDir(dir: String): String {
+        val d = File(dir)
+        val files = d.listFiles().orEmpty()
+            .filter { it.isFile }
+            .sortedBy { it.name }
+            .joinToString(", ") { "${it.name}=${it.length()}B" }
+        val canonical = File(d, "model.onnx")
+        return buildString {
+            append("dir=$dir")
+            append(" model.onnx=${if (canonical.isFile) "YES(${canonical.length()}B)" else "NO"}")
+            append(" tokens.txt=${if (File(d, "tokens.txt").isFile) "YES" else "NO"}")
+            append(" lexicon.txt=${if (File(d, "lexicon.txt").isFile) "YES" else "NO"}")
+            append(" dict=${if (File(d, "dict").isDirectory) "YES" else "NO"}")
+            append(" files=[$files]")
+        }
     }
 
     /**
@@ -244,7 +279,7 @@ class SherpaOnnxTtsProvider @Inject constructor(
      */
     private fun resolveModelOnnx(dir: String, modelId: String): String {
         val canonical = File(dir, "model.onnx")
-        if (canonical.isFile) return canonical.absolutePath
+        if (canonical.isFile && canonical.length() > 0) return canonical.absolutePath
 
         val fallback = File(dir).listFiles { f ->
             f.isFile && f.extension.equals("onnx", ignoreCase = true) &&
