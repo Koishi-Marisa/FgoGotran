@@ -277,15 +277,17 @@ val extractSherpaOnnxRuntimeLibs by tasks.registering(Copy::class) {
     }
 }
 
-tasks.whenTaskAdded {
+tasks.configureEach {
     val name = this.name
     if ((name.startsWith("merge") && name.endsWith("Assets")) ||
         name.contains("Lint", ignoreCase = true)
     ) {
-        this.dependsOn(prepareSherpaBuiltinAssets)
+        dependsOn(prepareSherpaBuiltinAssets)
     }
-    if (name == "mergeDebugNativeLibs" || name == "mergeReleaseNativeLibs") {
-        this.dependsOn(extractSherpaOnnxRuntimeLibs)
+    if (name == "mergeDebugJniLibFolders" || name == "mergeReleaseJniLibFolders" ||
+        name == "mergeDebugNativeLibs" || name == "mergeReleaseNativeLibs"
+    ) {
+        dependsOn(extractSherpaOnnxRuntimeLibs)
     }
 }
 
