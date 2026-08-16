@@ -41,9 +41,14 @@ android {
     }
 
     // generated assets：内置 Sherpa 模型由 Gradle 下载后放在这里
+    // generated jniLibs：从 Sherpa-ONNX AAR 提取的 libonnxruntime.so 放在这里，
+    // 确保覆盖 Microsoft ONNX Runtime AAR 中的同名 so，避免 Sherpa JNI 加载失败。
     sourceSets {
         getByName("main").assets.srcDir(
             "$buildDir/generated/assets/sherpa_builtin"
+        )
+        getByName("main").jniLibs.srcDir(
+            "$buildDir/generated/jniLibs"
         )
     }
 
@@ -110,8 +115,10 @@ android {
     }
 
     packaging {
-        // sherpa-onnx AAR 自带 libonnxruntime.so；使用 Sherpa 版本以避免与 Microsoft ONNX Runtime 冲突。
-        // 若后续 PaddleOCR 需要 Microsoft 版本，再考虑拆分包名或改用本地 AAR。
+        // Sherpa-ONNX 与 Microsoft ONNX Runtime AAR 都包含 libonnxruntime.so。
+        // 我们已通过 extractSherpaOnnxRuntimeLibs task 把 Sherpa 版本的 so 放到
+        // build/generated/jniLibs/ 并通过 sourceSet 参与打包；pickFirsts 确保只保留
+        // 一份，避免重复 so 冲突。
         jniLibs.pickFirsts += listOf(
             "lib/arm64-v8a/libonnxruntime.so",
             "lib/armeabi-v7a/libonnxruntime.so",
@@ -234,12 +241,51 @@ val prepareSherpaBuiltinAssets = tasks.register("prepareSherpaBuiltinAssets", Co
     }
 }
 
+// ======================================================================
+// Sherpa-ONNX libonnxruntime.so 提取
+// 目的：Microsoft 与 Sherpa 的 AAR 都带 libonnxruntime.so，但 Sherpa JNI 必须链接
+// 到 Sherpa 自己编译的版本。这里从 Sherpa AAR 单独提取该 so 并通过 sourceSet
+// 参与打包，配合 packaging.pickFirsts 确保最终 APK 使用 Sherpa 版本。
+// ======================================================================
+val sherpaAar by configurations.creating {
+    isTransitive = false
+}
+
+val extractSherpaOnnxRuntimeLibs by tasks.registering(Copy::class) {
+    description = "从 Sherpa-ONNX AAR 提取 libonnxruntime.so，覆盖 Microsoft 版本"
+    group = "build"
+
+    val aarFile = provider {
+        val files = sherpaAar.resolve()
+        require(files.size == 1) {
+            "期望只解析到一个 Sherpa-ONNX AAR，实际得到 ${files.size} 个: $files"
+        }
+        files.single()
+    }
+
+    from(zipTree(aarFile).matching {
+        include("jni/**/libonnxruntime.so")
+    })
+    into(layout.buildDirectory.dir("generated/jniLibs"))
+
+    // AAR 内路径为 jni/arm64-v8a/libonnxruntime.so；sourceSet jniLibs 期望 lib/<abi>/
+    eachFile {
+        val segments = relativePath.segments.toList()
+        if (segments.isNotEmpty() && segments[0] == "jni") {
+            relativePath = RelativePath(true, *segments.drop(1).toTypedArray())
+        }
+    }
+}
+
 tasks.whenTaskAdded {
     val name = this.name
     if ((name.startsWith("merge") && name.endsWith("Assets")) ||
         name.contains("Lint", ignoreCase = true)
     ) {
         this.dependsOn(prepareSherpaBuiltinAssets)
+    }
+    if (name == "mergeDebugNativeLibs" || name == "mergeReleaseNativeLibs") {
+        this.dependsOn(extractSherpaOnnxRuntimeLibs)
     }
 }
 
@@ -285,6 +331,8 @@ dependencies {
         // 官方 Android AAR：包含 libsherpa-onnx-jni.so 与 libonnxruntime.so
         // 坐标必须与官方示例一致：com.github.k2-fsa.sherpa-onnx:sherpa-onnx:v1.13.5
         implementation("com.github.k2-fsa.sherpa-onnx:sherpa-onnx:v1.13.5")
+        // 同时让 sherpaAar 配置解析到同一 AAR，供 extractSherpaOnnxRuntimeLibs task 提取 so
+        sherpaAar("com.github.k2-fsa.sherpa-onnx:sherpa-onnx:v1.13.5")
     } else {
         logger.lifecycle("[SherpaBuiltin] includeSherpaRuntime=false，跳过 sherpa-onnx-android AAR 引入")
     }

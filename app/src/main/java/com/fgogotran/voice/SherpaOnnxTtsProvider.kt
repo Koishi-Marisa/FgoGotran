@@ -61,10 +61,26 @@ class SherpaOnnxTtsProvider @Inject constructor(
         withContext(Dispatchers.IO) {
             try {
                 Class.forName("com.k2fsa.sherpa.onnx.OfflineTts")
+            } catch (e: ClassNotFoundException) {
+                throw IllegalStateException(
+                    "Sherpa-ONNX Kotlin API 未找到。请确认 APK 包含 sherpa-onnx AAR，" +
+                        "或切换为 Azure 云端合成。",
+                    e
+                )
+            } catch (e: UnsatisfiedLinkError) {
+                // 类找到了但 so 加载失败：通常是 libonnxruntime.so / libsherpa-onnx-jni.so
+                // 版本或来源不匹配。把原始异常消息暴露出来，方便定位。
+                val original = e.message ?: e.toString()
+                FgoLogger.error(tag, "Sherpa-ONNX native load failed: $original", e)
+                throw IllegalStateException(
+                    "本地 TTS 库加载失败。原始错误：$original\n" +
+                        "常见原因：APK 中的 libonnxruntime.so 不是 Sherpa-ONNX 编译的版本。" +
+                        "请尝试重新安装 APK 或切换为 Azure 云端合成。",
+                    e
+                )
             } catch (e: Throwable) {
                 throw IllegalStateException(
-                    "Sherpa-ONNX JNI 库未找到。请确认 APK 包含 sherpa-onnx 运行时，" +
-                        "或切换为 Azure 云端合成。",
+                    "初始化 Sherpa-ONNX 失败：${e.message}。请切换为 Azure 云端合成。",
                     e
                 )
             }
