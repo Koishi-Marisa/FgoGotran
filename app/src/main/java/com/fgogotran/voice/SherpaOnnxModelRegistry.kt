@@ -369,8 +369,14 @@ class SherpaOnnxModelRegistry @Inject constructor(
         }
     }
 
-    /** 判断某模型是否已安装 */
-    fun isInstalled(modelId: String): Boolean = installDirFor(modelId).isDirectory
+    /** 判断某模型是否已安装（目录存在且含可用的 .onnx 模型文件，损坏的安装允许重新下载） */
+    fun isInstalled(modelId: String): Boolean {
+        val dir = installDirFor(modelId)
+        if (!dir.isDirectory) return false
+        if (File(dir, "model.onnx").isFile) return true
+        return dir.listFiles { f -> f.isFile && f.extension.equals("onnx", ignoreCase = true) }
+            ?.isNotEmpty() == true
+    }
 
     /** 该模型是否随 APK assets 内置（卸载后会在下次启动/刷新时自动重新安装，无需手动卸载）。 */
     fun isBundledInApk(modelId: String): Boolean {
@@ -426,6 +432,9 @@ class SherpaOnnxModelRegistry @Inject constructor(
         }
 
         onProgress?.invoke(95, "写入注册表")
+        // sherpa 官方包内模型文件名各异（keqing.onnx / vits-zh-hf-fanchen-C.onnx / model.int8.onnx…），
+        // 统一规范为 model.onnx，否则 native 层找不到模型会 "Failed to create OfflineTts"
+        normalizeModelFile(dir)
         persistInstalled(manifest)
 
         onProgress?.invoke(100, "安装完成")
@@ -715,6 +724,14 @@ class SherpaOnnxModelRegistry @Inject constructor(
     fun listInstalled(): List<InstalledSherpaModel> {
         val catalog = builtinCatalog().associateBy { it.modelId }
         return modelsDir.listFiles()?.filter { it.isDirectory }.orEmpty().mapNotNull { dir ->
+            // 懒迁移：旧版本安装的模型目录里是原始文件名（如 vits-zh-hf-fanchen-C.onnx），
+            // 这里统一规范为 model.onnx，否则加载时会 "Failed to create OfflineTts"。
+            // 迁移失败（目录内无 .onnx）视为损坏安装，跳过并让 UI 引导重新下载。
+            val migrated = runCatching { normalizeModelFile(dir) }
+                .onFailure { FgoLogger.warn(tag, "跳过损坏的模型目录 ${dir.name}：${it.message}") }
+                .isSuccess
+            if (!migrated) return@mapNotNull null
+
             val id = dir.name
             val manifest = catalog[id]
                 // 用户自定义导入的模型，做一个最小 manifest fallback
@@ -826,6 +843,62 @@ class SherpaOnnxModelRegistry @Inject constructor(
         // 去掉 tar 最外层同名目录（sherpa 打包通常带一层）
         val parts = stripped.split('/', limit = 2)
         return if (parts.size == 2 && parts[0].isNotBlank() && !parts[0].contains('.')) parts[1] else stripped
+    }
+
+    /**
+     * 将模型目录内的主 .onnx 文件规范为固定的 model.onnx。
+     *
+     * sherpa 官方包内模型文件名各异（vits-zh-hf-fanchen-C.onnx / keqing.onnx /
+     * model-steps-*.onnx…），而加载侧统一按 model.onnx 引用；不重命名会导致
+     * native 层找不到模型，抛出 "Failed to create OfflineTts"。
+     *
+     * 幂等：已存在 model.onnx 时直接返回，因此可对旧版本已安装的模型反复调用做懒迁移。
+     */
+    private fun normalizeModelFile(dir: File) {
+        val canonical = File(dir, "model.onnx")
+        if (canonical.isFile) return
+
+        // 排除 Matcha 的 vocoder（hifigan*.onnx / vocoder*.onnx），只挑主模型
+        val candidates = dir.listFiles { f ->
+            f.isFile && f.extension.equals("onnx", ignoreCase = true) &&
+                !f.name.startsWith("hifigan", ignoreCase = true) &&
+                !f.name.startsWith("vocoder", ignoreCase = true)
+        }.orEmpty()
+
+        when {
+            candidates.isEmpty() ->
+                throw IllegalStateException("模型目录中没有 .onnx 模型文件：${dir.absolutePath}")
+            candidates.size == 1 -> {
+                if (!candidates[0].renameTo(canonical)) {
+                    throw IllegalStateException("重命名模型文件失败：${candidates[0].name} → model.onnx")
+                }
+                FgoLogger.info(tag, "已规范模型文件名: ${candidates[0].name} -> model.onnx (${dir.name})")
+            }
+            else -> {
+                // 极少数包内 int8/fp32 并存：取体积最大的（完整精度版）
+                val picked = candidates.maxByOrNull { it.length() } ?: candidates[0]
+                FgoLogger.warn(
+                    tag,
+                    "模型目录存在多个 .onnx（${candidates.joinToString { it.name }}），选用 ${picked.name}"
+                )
+                if (!picked.renameTo(canonical)) {
+                    throw IllegalStateException("重命名模型文件失败：${picked.name} → model.onnx")
+                }
+            }
+        }
+
+        // Matcha 的 vocoder 也统一命名为 hifigan.onnx（加载侧按该名字查找）
+        val vocoder = dir.listFiles { f ->
+            f.isFile && f.extension.equals("onnx", ignoreCase = true) &&
+                (f.name.startsWith("hifigan", ignoreCase = true) ||
+                    f.name.startsWith("vocoder", ignoreCase = true))
+        }.orEmpty().maxByOrNull { it.length() }
+        if (vocoder != null) {
+            val target = File(dir, "hifigan.onnx")
+            if (!target.isFile && !vocoder.renameTo(target)) {
+                FgoLogger.warn(tag, "重命名 vocoder 失败: ${vocoder.name} -> hifigan.onnx")
+            }
+        }
     }
 
     private fun formatMb(bytes: Long): String {

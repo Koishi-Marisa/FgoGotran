@@ -224,8 +224,41 @@ class SherpaOnnxTtsProvider @Inject constructor(
 
         val config = buildTtsConfig(installed)
         FgoLogger.info(tag, "加载 Sherpa 模型 ${installed.manifest.modelId}")
-        tts = OfflineTts(config = config)
+        tts = try {
+            OfflineTts(config = config)
+        } catch (e: Throwable) {
+            // 常见于模型文件缺失/损坏（如包内文件名未规范为 model.onnx）
+            FgoLogger.error(tag, "创建 OfflineTts 失败（${installed.manifest.modelId}）: ${e.message}", e)
+            throw IllegalStateException(
+                "创建本地 TTS 引擎失败（${installed.manifest.modelId}）：${e.message}。" +
+                    "请在「语音设置」中卸载后重新下载该模型。",
+                e
+            )
+        }
         activeModelId = installed.manifest.modelId
+    }
+
+    /**
+     * 解析模型主文件路径：优先 model.onnx；缺失时兜底目录内体积最大的
+     * 非 vocoder .onnx（双保险，兼容未迁移的旧安装/自定义导入目录）。
+     */
+    private fun resolveModelOnnx(dir: File, modelId: String): String {
+        val canonical = File(dir, "model.onnx")
+        if (canonical.isFile) return canonical.absolutePath
+
+        val fallback = dir.listFiles { f ->
+            f.isFile && f.extension.equals("onnx", ignoreCase = true) &&
+                !f.name.startsWith("hifigan", ignoreCase = true) &&
+                !f.name.startsWith("vocoder", ignoreCase = true)
+        }.orEmpty().maxByOrNull { it.length() }
+
+        if (fallback != null) {
+            FgoLogger.warn(tag, "model.onnx 缺失，回退使用 ${fallback.name}（$modelId）")
+            return fallback.absolutePath
+        }
+        throw IllegalStateException(
+            "模型目录缺少 .onnx 文件（${dir.absolutePath}），请在「语音设置」中重新下载 $modelId"
+        )
     }
 
     private fun buildTtsConfig(installed: InstalledSherpaModel): OfflineTtsConfig {
@@ -237,6 +270,7 @@ class SherpaOnnxTtsProvider @Inject constructor(
             debug = false,
             provider = "cpu"
         )
+        val modelOnnx = resolveModelOnnx(dir, installed.manifest.modelId)
 
         return when (installed.manifest.modelType) {
             SherpaModelType.VITS_PLAIN -> {
@@ -244,7 +278,7 @@ class SherpaOnnxTtsProvider @Inject constructor(
                 // 缺少 lexicon 会导致 native 层 Lexicon 查找失败而 SIGABRT（sherpa-onnx#823）。
                 val lexiconFile = File(dir, "lexicon.txt")
                 val vits = OfflineTtsVitsModelConfig(
-                    model = "$dir/model.onnx",
+                    model = modelOnnx,
                     tokens = "$dir/tokens.txt",
                     lexicon = if (lexiconFile.isFile) lexiconFile.absolutePath else ""
                 )
@@ -267,7 +301,7 @@ class SherpaOnnxTtsProvider @Inject constructor(
 
             SherpaModelType.PIPER_VITS -> {
                 val vits = OfflineTtsVitsModelConfig(
-                    model = "$dir/model.onnx",
+                    model = modelOnnx,
                     tokens = "$dir/tokens.txt",
                     dataDir = "$dir/espeak-ng-data"
                 )
@@ -280,7 +314,7 @@ class SherpaOnnxTtsProvider @Inject constructor(
                     "$dir/lexicon-us-en.txt".takeIf { File(it).exists() }
                 ).joinToString(",")
                 val kokoro = OfflineTtsKokoroModelConfig(
-                    model = "$dir/model.onnx",
+                    model = modelOnnx,
                     voices = "$dir/voices.bin",
                     tokens = "$dir/tokens.txt",
                     lexicon = lexicon,
@@ -290,9 +324,7 @@ class SherpaOnnxTtsProvider @Inject constructor(
             }
 
             SherpaModelType.MATCHA_TTS -> {
-                val acoustic = File(dir, "model.onnx")
-                    .takeIf { it.exists() }
-                    ?: throw IllegalStateException("Matcha TTS 缺少 acoustic model")
+                val acoustic = File(modelOnnx)
                 val vocoder = File(dir, "hifigan.onnx").takeIf { it.exists() }
                     ?: File(dir, "vocoder.onnx").takeIf { it.exists() }
                     ?: throw IllegalStateException("Matcha TTS 缺少 vocoder 模型")
