@@ -108,8 +108,6 @@ class FgoAccessibilityService : AccessibilityService() {
     private var lastSemiAutoRenderedStabilityKey = ""
     private var lastSemiAutoChoiceRenderedStabilityKey = ""
     private var lastAutoRenderedStabilityKey = ""
-    /** 自动后台无「完成标记」时的稳定文本兜底：记录上一轮 OCR 对话文本指纹 */
-    private var voiceOnlyFallbackPreviousFingerprint = ""
     private var autoScanReadyAt = 0L
     private var semiAutoBackgroundRetryAt = 0L
     private var semiAutoBlankOcrStreak = 0
@@ -774,7 +772,6 @@ class FgoAccessibilityService : AccessibilityService() {
         lastSemiAutoRenderedStabilityKey = ""
         lastSemiAutoChoiceRenderedStabilityKey = ""
         lastAutoRenderedStabilityKey = ""
-        voiceOnlyFallbackPreviousFingerprint = ""
         failedAutoRenderFingerprint = ""
         failedAutoRenderRetryAt = 0L
         resetSemiAutoBackgroundState()
@@ -1295,12 +1292,18 @@ class FgoAccessibilityService : AccessibilityService() {
         screenRegions: FgoScreenRegions,
         mode: ProcessingMode
     ): SceneSource? {
+        val includeChoices = aiVoiceChoiceTextEnabled
         val dialogueComplete = backgroundDetector.isDialogueCompleteMarkerVisible(
             source,
             screenRegions.dialogueComplete
         )
         if (dialogueComplete) {
-            val sceneSource = scanVoiceOnlyDialogueScene(source, screenRegions)
+            val sceneSource = scanVoiceOnlyDialogueScene(
+                source = source,
+                screenRegions = screenRegions,
+                includeChoices = includeChoices,
+                mode = mode
+            )
             if (sceneSource == null && mode == ProcessingMode.SEMI_AUTO_BACKGROUND) {
                 rememberSemiAutoBlankOcr()
             }
@@ -1308,24 +1311,20 @@ class FgoAccessibilityService : AccessibilityService() {
         }
 
         // 完成标记不可见（部分设备/分辨率/游戏版本检测不到）时的兜底：
-        // 连续两轮 OCR 到相同的对话文本视为「文字已打完」，直接朗读，
-        // 保证自动/半自动后台模式不会因永远等不到标记而无法朗读。
-        val fallback = scanVoiceOnlyDialogueScene(source, screenRegions)
-        if (fallback == null) {
-            if (mode == ProcessingMode.SEMI_AUTO_BACKGROUND) {
-                rememberSemiAutoBlankOcr()
-            }
-            voiceOnlyFallbackPreviousFingerprint = ""
-            return null
+        // 与手动路径一致——只要 OCR 检测到对话文本就立即朗读。
+        // 不再等标记或「两轮稳定」：FGO 打字中 OCR 结果每轮都变，
+        // 等凑齐两轮相同往往已被点击推进，导致自动模式永远错过朗读窗口。
+        // 去重由 processVoiceOnlyScreen 的 isAlreadyRenderedSource 保证。
+        val fallback = scanVoiceOnlyDialogueScene(
+            source = source,
+            screenRegions = screenRegions,
+            includeChoices = includeChoices,
+            mode = mode
+        )
+        if (fallback == null && mode == ProcessingMode.SEMI_AUTO_BACKGROUND) {
+            rememberSemiAutoBlankOcr()
         }
-        val fingerprint = fallback.fingerprint
-        return if (fingerprint.isNotBlank() && fingerprint == voiceOnlyFallbackPreviousFingerprint) {
-            voiceOnlyFallbackPreviousFingerprint = ""
-            fallback
-        } else {
-            voiceOnlyFallbackPreviousFingerprint = fingerprint
-            null
-        }
+        return fallback
     }
 
     private fun requestVoiceOnlyScene(sceneSource: SceneSource) {
