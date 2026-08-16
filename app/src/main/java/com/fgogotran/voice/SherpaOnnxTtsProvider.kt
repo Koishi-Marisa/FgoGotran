@@ -119,7 +119,9 @@ class SherpaOnnxTtsProvider @Inject constructor(
         request: VoiceSynthesisRequest,
         outputFile: File
     ): Boolean = withContext(Dispatchers.Default) {
-        mutex.withLock {
+        // 锁内只做推理（OfflineTts 非线程安全，需串行）；纯文件写入挪到锁外，
+        // 让多角色并发合成时写 WAV 不再阻塞后续角色的推理。
+        val synthesized = mutex.withLock {
             warmUpIfNeeded()
 
             val installed = registry.listInstalled().firstOrNull { it.manifest.modelId == activeModelId }
@@ -150,15 +152,22 @@ class SherpaOnnxTtsProvider @Inject constructor(
             } catch (e: OutOfMemoryError) {
                 throw IllegalStateException("本地 TTS 内存不足，请缩短文本或切换为 Azure 云端合成", e)
             }
-
-            outputFile.parentFile?.mkdirs()
-            writeWav(outputFile, audio.samples, audio.sampleRate)
-            FgoLogger.info(
-                tag,
-                "本地合成完成: sid=$sid rate=$speed samples=${audio.samples.size} sr=${audio.sampleRate} → ${outputFile.name}"
+            SynthesizedAudio(
+                samples = audio.samples,
+                sampleRate = audio.sampleRate,
+                sid = sid,
+                speed = speed
             )
-            true
         }
+
+        outputFile.parentFile?.mkdirs()
+        writeWav(outputFile, synthesized.samples, synthesized.sampleRate)
+        FgoLogger.info(
+            tag,
+            "本地合成完成: sid=${synthesized.sid} rate=${synthesized.speed} " +
+                "samples=${synthesized.samples.size} sr=${synthesized.sampleRate} → ${outputFile.name}"
+        )
+        true
     }
 
     override suspend fun listAvailableVoices(): List<VoiceProfile> {
@@ -323,6 +332,14 @@ class SherpaOnnxTtsProvider @Inject constructor(
     private fun String.isNoRateSetting(): Boolean {
         return isBlank() || this == "0" || this == "0%" || this == "+0%" || this == "-0%"
     }
+
+    /** synthesizeToFile 锁内推理结果，供锁外写文件与日志使用 */
+    private data class SynthesizedAudio(
+        val samples: FloatArray,
+        val sampleRate: Int,
+        val sid: Int,
+        val speed: Float
+    )
 
     companion object {
         const val PROVIDER_ID = "sherpa_onnx"

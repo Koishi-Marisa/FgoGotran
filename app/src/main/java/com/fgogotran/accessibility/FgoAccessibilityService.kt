@@ -462,6 +462,11 @@ class FgoAccessibilityService : AccessibilityService() {
         serviceScope.launch(Dispatchers.IO) {
             translator.warmUp()
         }
+        // 本地 TTS：服务启动即后台预加载模型（类加载 + 模型加载约 1~2 秒），
+        // 这样玩家第一次触发朗读时不需要再等待模型就绪，显著缩短首句响应。
+        serviceScope.launch(Dispatchers.IO) {
+            runCatching { aiVoiceService.warmUpCurrentProvider() }
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -852,16 +857,17 @@ class FgoAccessibilityService : AccessibilityService() {
                                 afterMenuDismiss = waitForMenuDismissal,
                                 requestedMode = translationMode
                             )
-                        } else if ((isFgoForeground || !isJapaneseServer()) &&
+                        } else if (isFgoForeground &&
                             translationMode != TranslationMode.MANUAL &&
                             !translationOverlay.isShowing() &&
                             !(translationMode == TranslationMode.SEMI_AUTO && isSemiAutoBackgroundCoolingDown()) &&
                             SystemClock.elapsedRealtime() >= autoScanReadyAt
                         ) {
-                            // 国服朗读模式（voice-only，overlay 恒隐藏）：部分设备/模拟器收不到
-                            // FGO 的窗口事件，isFgoForeground 永远为 false 导致自动后台被永久跳过。
-                            // 放宽前台检查：直接后台扫描，OCR 只识别 FGO 对话区域（hasDialogue 校验），
-                            // 在其它 App 上不会误读；日服保留前台标志依赖（有 overlay 渲染链路）。
+                            // 仅当 FGO 处于前台（无障碍事件确认）时才进入后台扫描。
+                            // 说明：v2.2.9 曾放宽为「国服不依赖前台标志直接后台扫描」，
+                            // 但 FGO 对话句在屏幕上停留期间会被反复扫描朗读，导致同一句话
+                            // 被多次重复。包名识别（含 com.bilibili.fategp）修复后前台标志
+                            // 已能正常更新，故恢复前台依赖。
                             translationJob = serviceScope.launch {
                                 val backgroundMode = when (translationMode) {
                                     TranslationMode.SEMI_AUTO -> ProcessingMode.SEMI_AUTO_BACKGROUND
