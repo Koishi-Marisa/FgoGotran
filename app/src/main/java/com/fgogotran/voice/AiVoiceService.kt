@@ -51,6 +51,7 @@ class AiVoiceService @Inject constructor(
     private val speakMutex = Mutex()
     private val tempProfileMutex = Mutex()
     private val analyticsScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val warmUpScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val voiceRequestLock = Any()
     private val tempProfileFailureRetryAt = mutableMapOf<String, Long>()
     private var latestVoiceRequestId = 0L
@@ -107,6 +108,12 @@ class AiVoiceService @Inject constructor(
                 )
                 return
             }
+        }
+
+        // 本地 TTS：尽早后台预热模型（类加载 + 模型加载约 1~2 秒），
+        // 与下方档案解析 / 缓存命中并行执行，隐藏首次合成的等待时间。
+        if (provider is SherpaOnnxTtsProvider) {
+            warmUpScope.launch { runCatching { provider.warmUp() } }
         }
 
         val gameServer = settingsRepository.getGameServer()
@@ -804,6 +811,14 @@ class AiVoiceService @Inject constructor(
 
     fun stop() {
         playbackEngine.stop()
+    }
+
+    /** 预热当前 provider（设置页切换引擎后调用，提前加载本地模型，首次朗读不用等）。 */
+    suspend fun warmUpCurrentProvider() {
+        runCatching { currentProvider().warmUp() }
+            .onFailure { e ->
+                FgoLogger.warn(tag, "TTS provider warm-up failed: ${e.message}")
+            }
     }
 
     private companion object {

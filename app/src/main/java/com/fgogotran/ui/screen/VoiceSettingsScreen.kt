@@ -117,6 +117,10 @@ fun VoiceSettingsScreen(
         ttsProvider = settingsRepository.ttsProvider.first()
         azureSpeechKey = settingsRepository.azureSpeechKey.first()
         azureSpeechRegion = settingsRepository.azureSpeechRegion.first()
+        if (ttsProvider == SettingsRepository.TTS_PROVIDER_SHERPA_ONNX) {
+            // 打开设置页就后台预热本地模型，提前隐藏首次加载耗时
+            scope.launch { runCatching { aiVoiceService.warmUpCurrentProvider() } }
+        }
     }
 
     fun saveAzureSpeechSettings() {
@@ -229,6 +233,8 @@ fun VoiceSettingsScreen(
                         ttsProvider = SettingsRepository.TTS_PROVIDER_SHERPA_ONNX
                         scope.launch {
                             settingsRepository.setTtsProvider(SettingsRepository.TTS_PROVIDER_SHERPA_ONNX)
+                            // 立即后台预热本地模型，之后第一次朗读不用等模型加载
+                            runCatching { aiVoiceService.warmUpCurrentProvider() }
                         }
                     }
                 )

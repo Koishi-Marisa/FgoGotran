@@ -55,7 +55,16 @@ class SherpaOnnxTtsProvider @Inject constructor(
     // =====================================================================
     override suspend fun warmUp() {
         if (tts != null) return
+        // 预热可能来自后台协程（设置页切换引擎 / 播放前预加载），
+        // 与 synthesizeToFile 共用同一把 mutex，保证不会与推理并发互相释放。
+        mutex.withLock {
+            if (tts != null) return@withLock
+            warmUpLocked()
+        }
+    }
 
+    /** 需在持有 [mutex] 时调用（synthesizeToFile 通过 [warmUpIfNeeded] 间接调用）。 */
+    private suspend fun warmUpLocked() {
         // 触发 OfflineTts 类加载，其 companion init 会 System.loadLibrary("sherpa-onnx-jni")。
         // 如果 APK 未包含对应 so，这里会抛出 UnsatisfiedLinkError，转成友好提示。
         withContext(Dispatchers.IO) {
@@ -184,8 +193,9 @@ class SherpaOnnxTtsProvider @Inject constructor(
     // =====================================================================
     // 内部
     // =====================================================================
+    /** 调用方（synthesizeToFile）已持有 [mutex]，直接走无锁内部实现，避免重入死锁。 */
     private suspend fun warmUpIfNeeded() {
-        if (tts == null) warmUp()
+        if (tts == null) warmUpLocked()
     }
 
     private suspend fun ensureModelLoaded(installed: InstalledSherpaModel) {
@@ -204,8 +214,10 @@ class SherpaOnnxTtsProvider @Inject constructor(
 
     private fun buildTtsConfig(installed: InstalledSherpaModel): OfflineTtsConfig {
         val dir = installed.installDir
+        // 用足设备核心数，显著加快 VITS/Kokoro 推理（2~4 线程是速度/功耗的平衡点）
+        val numThreads = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
         val baseModelConfig = OfflineTtsModelConfig(
-            numThreads = 2,
+            numThreads = numThreads,
             debug = false,
             provider = "cpu"
         )
