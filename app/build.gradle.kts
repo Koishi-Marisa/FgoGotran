@@ -347,9 +347,11 @@ dependencies {
     implementation("org.apache.commons:commons-compress:1.27.1")
 
     // Shizuku：经 adb（或无线调试）一次性授权后，可在 App 内自动开启
-    // 无障碍服务 + 悬浮窗权限，免去每次手动进系统设置
-    implementation("dev.rikka.shizuku:api:13.1.5")
-    implementation("dev.rikka.shizuku:provider:13.1.5")
+    // 无障碍服务 + 悬浮窗权限，免去每次手动进系统设置。
+    // 注意：13.1.x 起移除 Shizuku#newProcess，这里固定 12.1.0 以使用
+    // newProcess 直接执行 shell 命令（单进程 App，无 Android 14 provider crash 风险）。
+    implementation("dev.rikka.shizuku:api:12.1.0")
+    implementation("dev.rikka.shizuku:provider:12.1.0")
 
     // Ktor HTTP client
     implementation("io.ktor:ktor-client-android:2.3.12")

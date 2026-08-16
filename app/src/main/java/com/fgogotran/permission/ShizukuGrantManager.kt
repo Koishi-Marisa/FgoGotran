@@ -5,7 +5,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import com.fgogotran.accessibility.FgoAccessibilityService
 import com.fgogotran.util.FgoLogger
-import dev.rikka.shizuku.Shizuku
+import rikka.shizuku.Shizuku
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
