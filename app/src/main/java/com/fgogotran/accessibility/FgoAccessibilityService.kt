@@ -257,6 +257,7 @@ class FgoAccessibilityService : AccessibilityService() {
         FGO_PACKAGE,
         "com.aniplex.fategrandorder.en",
         "com.bilibili.fatego",
+        "com.bilibili.fategp",
         "com.bilibili.fatego.sharejoy",
         "com.bilibili.fgo.mi",
         "com.xiaomeng.fategrandorder",
@@ -265,6 +266,7 @@ class FgoAccessibilityService : AccessibilityService() {
     private val supportedFgoPackagePrefixes = setOf(
         "$FGO_PACKAGE.",
         "com.bilibili.fatego.",
+        "com.bilibili.fategp.",
         "com.bilibili.fgo.",
         "com.xiaomeng.fategrandorder.",
         "com.komoe.fgo."
