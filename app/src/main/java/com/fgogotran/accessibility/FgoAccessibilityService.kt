@@ -850,12 +850,16 @@ class FgoAccessibilityService : AccessibilityService() {
                                 afterMenuDismiss = waitForMenuDismissal,
                                 requestedMode = translationMode
                             )
-                        } else if (isFgoForeground &&
+                        } else if ((isFgoForeground || !isJapaneseServer()) &&
                             translationMode != TranslationMode.MANUAL &&
                             !translationOverlay.isShowing() &&
                             !(translationMode == TranslationMode.SEMI_AUTO && isSemiAutoBackgroundCoolingDown()) &&
                             SystemClock.elapsedRealtime() >= autoScanReadyAt
                         ) {
+                            // 国服朗读模式（voice-only，overlay 恒隐藏）：部分设备/模拟器收不到
+                            // FGO 的窗口事件，isFgoForeground 永远为 false 导致自动后台被永久跳过。
+                            // 放宽前台检查：直接后台扫描，OCR 只识别 FGO 对话区域（hasDialogue 校验），
+                            // 在其它 App 上不会误读；日服保留前台标志依赖（有 overlay 渲染链路）。
                             translationJob = serviceScope.launch {
                                 val backgroundMode = when (translationMode) {
                                     TranslationMode.SEMI_AUTO -> ProcessingMode.SEMI_AUTO_BACKGROUND
