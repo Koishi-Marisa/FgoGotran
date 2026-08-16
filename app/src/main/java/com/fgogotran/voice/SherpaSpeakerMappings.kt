@@ -9,7 +9,10 @@ import javax.inject.Singleton
  * ### 三层优先级（越靠前优先级越高）
  * 1. **显式覆盖（TSV / TempVoice API 里写死）**：`VoiceProfile.style` 若满足 `sid:17` 格式，直接用；
  * 2. **角色内置映射表（本组件）**：按「模型 id × 角色名」精确匹配，例如 Saber 在 fanchen-C 用 sid=22；
- * 3. **稳定 hash fallback**：根据「角色名 + 性别描述」做 hash，保证同一个角色在同一模型下永远落到相同 speaker id，避免每句话音色跳变。
+ * 3. **性别感知 speaker 选择**：根据 AI 返回的 voice_type（profile.description）判断角色性别，
+ *    在模型的「已知性别 speaker 集合」里稳定 hash。男性角色只会落到男声集合，女性角色只会落到女声集合。
+ * 4. **稳定 hash fallback**：模型性别分布未知时，按「角色名 + 性别」先分区再 hash，
+ *    保证同一个角色在同一模型下永远落到相同 speaker id，避免每句话音色跳变。
  */
 @Singleton
 class SherpaSpeakerMappings @Inject constructor() {
@@ -55,10 +58,33 @@ class SherpaSpeakerMappings @Inject constructor() {
             return clamp(byModel, installed.manifest.speakerCount)
         }
 
-        // 优先级 3：根据角色性别 + 名称稳定 hash，落在模型支持的区间内
+        // 优先级 3：性别感知 speaker 选择。
+        // AI 返回的 voice_type（young_male / mature_female ...）存在 profile.description 里，
+        // 对已知性别分布的模型（zh-ll、Kokoro）直接把男/女角色落到对应音色集合，
+        // 彻底避免「男性角色被分配女声」这类性别错配。
+        val gender = detectGender(
+            name = normalizedSpeaker,
+            description = profile.description
+        )
+        val genderSet = genderSidSets(
+            modelId = installed.manifest.modelId,
+            speakerCount = installed.manifest.speakerCount
+        )
+        if (genderSet != null) {
+            val pool = when (gender) {
+                Gender.MALE -> genderSet.maleSids
+                Gender.FEMALE -> genderSet.femaleSids
+                Gender.UNKNOWN -> null
+            }
+            if (!pool.isNullOrEmpty()) {
+                return pool[stableIndex(normalizedSpeaker, pool.size)]
+            }
+        }
+
+        // 优先级 4：稳定 hash fallback（先按性别分区，再在分区内 hash）
         val bucket = stableBucketFor(
             name = normalizedSpeaker,
-            genderHint = profile.description,
+            gender = gender,
             max = installed.manifest.speakerCount
         )
         return clamp(bucket, installed.manifest.speakerCount)
@@ -203,7 +229,14 @@ class SherpaSpeakerMappings @Inject constructor() {
             "虞姬" to 18
         )
 
-        /** zh-ll 只有 5 speaker（0~4），按"主角色分类"粗粒度映射。 */
+        /**
+         * zh-ll 只有 5 speaker（0~4）。经实测基频验证的性别分布：
+         *   0 = suyingxue (苏樱雪, F0≈286Hz, 女声)
+         *   1 = gunian     (姑念,   F0≈109Hz, 男声)
+         *   2 = fushiyu    (傅诗语, F0≈239Hz, 女声)
+         *   3 = bingjiao   (病娇,   F0≈182Hz, 女声)
+         *   4 = bazong     (霸总,   F0≈120Hz, 男声)
+         */
         private val fgoRoleToZhLl: Map<String, Int> = mapOf(
             "玛修基列莱特" to 2,
             "玛修" to 2,
@@ -219,8 +252,8 @@ class SherpaSpeakerMappings @Inject constructor() {
             "金闪闪" to 4,
             "英雄王" to 4,
             "贞德" to 0,
-            "贞德Alter" to 1,
-            "黑贞" to 1,
+            "贞德Alter" to 3,
+            "黑贞" to 3,
             "梅林" to 4,
             "孔明" to 4,
             "福尔摩斯" to 4,
@@ -232,14 +265,14 @@ class SherpaSpeakerMappings @Inject constructor() {
 
         /** Kokoro 多语言包（通常 90+ speaker，按 sid 粗映射） */
         private val fgoRoleToKokoro: Map<String, Int> = mapOf(
-            "玛修基列莱特" to 18,
-            "玛修" to 18,
+            "玛修基列莱特" to 2,
+            "玛修" to 2,
             "阿尔托莉雅潘德拉贡" to 10,
             "Saber" to 10,
             "远坂凛" to 32,
             "吉尔伽美什" to 72,
             "贞德" to 10,
-            "贞德Alter" to 14,
+            "贞德Alter" to 4,
             "咕哒子" to 5,
             "咕哒夫" to 80
         )
@@ -248,6 +281,88 @@ class SherpaSpeakerMappings @Inject constructor() {
     // ==================================================================
     // 工具
     // ==================================================================
+
+    private enum class Gender { MALE, FEMALE, UNKNOWN }
+
+    private data class GenderSidSet(val femaleSids: List<Int>, val maleSids: List<Int>)
+
+    /**
+     * 已知性别分布的模型的 speaker 集合。
+     * 返回 null 表示该模型性别分布未知（如 fanchen-C 187 音色无官方性别标注），
+     * 此时走稳定 hash fallback。
+     */
+    private fun genderSidSets(modelId: String, speakerCount: Int): GenderSidSet? = when (modelId) {
+        // zh-ll 5 speaker 性别经基频实测：0/2/3 女声，1/4 男声
+        ZH_LL_MODEL_ID -> GenderSidSet(femaleSids = listOf(0, 2, 3), maleSids = listOf(1, 4))
+        KOKORO_MODEL_ID_V10,
+        KOKORO_MODEL_ID_V11,
+        KOKORO_MODEL_ID_V11_INT8,
+        KOKORO_MODEL_ID_LEGACY -> kokoroGenderSidSet(speakerCount)
+        else -> null
+    }
+
+    /**
+     * Kokoro 官方 voices 命名规则：`<2字母><性别>_<名字>`，
+     * f = female（af_/bf_/ef_/ff_/hf_/if_/jf_/pf_/zf_），m = male（am_/bm_/em_/hm_/im_/jm_/pm_/zm_）。
+     * v1.0 有 53 个 speaker，顺序固定；v1.1 在此基础上向后扩展（前 53 个顺序保持一致）。
+     * 这里只认 v1.0 已确认的前 53 个段，超出范围（未知性别）不计入集合。
+     */
+    private fun kokoroGenderSidSet(speakerCount: Int): GenderSidSet {
+        data class Seg(val start: Int, val end: Int, val female: Boolean)
+        val segments = listOf(
+            Seg(0, 10, true), Seg(11, 19, false), Seg(20, 23, true), Seg(24, 27, false),
+            Seg(28, 28, true), Seg(29, 29, false), Seg(30, 30, true), Seg(31, 32, true),
+            Seg(33, 34, false), Seg(35, 35, true), Seg(36, 36, false), Seg(37, 40, true),
+            Seg(41, 41, false), Seg(42, 42, true), Seg(43, 44, false), Seg(45, 48, true),
+            Seg(49, 52, false)
+        )
+        val female = mutableListOf<Int>()
+        val male = mutableListOf<Int>()
+        for (seg in segments) {
+            if (seg.start >= speakerCount) break
+            val last = minOf(seg.end, speakerCount - 1)
+            for (id in seg.start..last) {
+                if (seg.female) female.add(id) else male.add(id)
+            }
+        }
+        return GenderSidSet(female, male)
+    }
+
+    /**
+     * 从「角色名 + AI 的 voice_type 描述」判断性别。
+     * 注意顺序：必须先把 female 判定放在 male 之前——"young_female" 这类词
+     * 也包含子串 "male"（"fe**male**"），若先匹配 male 会把女声误判成男声。
+     */
+    private fun detectGender(name: String, description: String): Gender {
+        val hint = description.ifBlank { name }
+        if (GENDER_FEMALE_TOKENS.any { hint.contains(it, ignoreCase = true) }) return Gender.FEMALE
+        if (GENDER_MALE_TOKENS.any { hint.contains(it, ignoreCase = true) }) return Gender.MALE
+        return Gender.UNKNOWN
+    }
+
+    /** FNV-1a 风格稳定 hash，保证同一名字在同一池子里永远落在同一个槽位 */
+    private fun stableIndex(name: String, size: Int): Int {
+        if (size <= 0) return 0
+        var hash = 0x811c9dc5L
+        name.forEach { c ->
+            hash = hash xor c.code.toLong()
+            hash = (hash * 0x01000193L) and 0xffffffffL
+        }
+        return (hash % size).toInt()
+    }
+
+    /**
+     * 性别未知模型的稳定 hash fallback：
+     * 男性角色落在 [max/2, max) 区间，女性/中性角色落在 [0, max/2) 区间，
+     * 避免男性角色系统性落到前一半（很多模型前一半是女声，如 zh-ll 的 sid=0）。
+     */
+    private fun stableBucketFor(name: String, gender: Gender, max: Int): Int {
+        if (max <= 0) return 0
+        val male = gender == Gender.MALE
+        val half = (max / 2).coerceAtLeast(1)
+        val slot = stableIndex(name, if (male) (max - half).coerceAtLeast(1) else half)
+        return if (male) half + slot else slot
+    }
 
     private fun explicitSidFrom(raw: String): Int? {
         val candidate = raw.trim()
@@ -264,34 +379,14 @@ class SherpaSpeakerMappings @Inject constructor() {
         return c
     }
 
-    private fun stableBucketFor(name: String, genderHint: String, max: Int): Int {
-        if (max <= 0) return 0
-        val femaleBias = when {
-            GENDER_MALE_TOKENS.any { genderHint.contains(it, ignoreCase = true) } ||
-                GENDER_MALE_TOKENS.any { name.contains(it) } -> 0
-            GENDER_FEMALE_TOKENS.any { genderHint.contains(it, ignoreCase = true) } ||
-                GENDER_FEMALE_TOKENS.any { name.contains(it) } -> (max * 0.3).toInt()
-            else -> 0
-        }
-        var hash = 0x811c9dc5L
-        name.forEach { c ->
-            hash = hash xor c.code.toLong()
-            hash = (hash * 0x01000193L) and 0xffffffffL
-        }
-        // 先在 [0, max/2) 里挑一个女性/中性位置；若性别为男，跳到 [max/2, max) 区间
-        val half = (max.coerceAtLeast(2) / 2).coerceAtLeast(1)
-        val base = (hash % half).toInt().let { if (it < 0) it + half else it }
-        return base + femaleBias
-    }
-
     private val SID_PREFIXES = listOf("sid:", "spk:", "speaker:", "speaker_id=", "id:")
 
     private val GENDER_MALE_TOKENS = listOf(
-        "男", "male", "man", "少年", "大叔", "先生", "爷爷", "父", "兄", "青年男声", "男声",
+        "male", "男", "man", "少年", "大叔", "先生", "爷爷", "父", "兄", "青年男声", "男声",
         "saber男", "archer男", "lancer男"
     )
     private val GENDER_FEMALE_TOKENS = listOf(
-        "女", "female", "woman", "少女", "萝莉", "御姐", "太太", "女士", "姐", "妹", "妈",
+        "female", "女", "woman", "少女", "萝莉", "御姐", "太太", "女士", "姐", "妹", "妈",
         "女声", "青年女声"
     )
 }
