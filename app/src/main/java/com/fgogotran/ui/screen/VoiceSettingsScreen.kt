@@ -58,6 +58,8 @@ import com.fgogotran.translation.VoiceLineHint
 import com.fgogotran.voice.AiVoiceService
 import com.fgogotran.voice.SherpaOnnxModelManifest
 import com.fgogotran.voice.SherpaOnnxModelRegistry
+import com.fgogotran.voice.SherpaSpeakerMappings
+import com.fgogotran.voice.SidRoleGroup
 import com.fgogotran.voice.TtsTestResult
 import com.fgogotran.voice.VoiceNameNormalizer
 import kotlinx.coroutines.async
@@ -74,6 +76,7 @@ fun VoiceSettingsScreen(
     translator: Translator,
     aiVoiceService: AiVoiceService,
     sherpaOnnxModelRegistry: SherpaOnnxModelRegistry,
+    sherpaSpeakerMappings: SherpaSpeakerMappings,
     onBack: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -125,6 +128,11 @@ fun VoiceSettingsScreen(
     var charOverrides by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     var charOverrideSpeakerCount by remember { mutableStateOf(1) }
 
+    // 内置角色分配列表（查看 + 试听）
+    var showAssignments by remember { mutableStateOf(false) }
+    var sidGroups by remember { mutableStateOf<List<SidRoleGroup>>(emptyList()) }
+    var previewingSid by remember { mutableStateOf<Int?>(null) }
+
     // 加速线路（测速 / 切换）
     var selectedProxyPrefix by remember { mutableStateOf("") }
     var proxySpeeds by remember { mutableStateOf<Map<String, SherpaOnnxModelRegistry.ProxySpeedResult>>(emptyMap()) }
@@ -152,11 +160,12 @@ fun VoiceSettingsScreen(
         installedSherpaModelIds = sherpaOnnxModelRegistry.listInstalled()
             .map { it.manifest.modelId }
             .toSet()
-        // 角色音色覆盖表 + 当前模型的音色数量
+        // 角色音色覆盖表 + 当前模型的音色数量 + 内置分配表
         charOverrides = settingsRepository.sherpaCharVoiceOverrides.first()
-        sherpaOnnxModelRegistry.selectedInstalled()?.let {
-            charOverrideSpeakerCount = it.manifest.speakerCount
+        sherpaOnnxModelRegistry.selectedInstalled()?.let { inst ->
+            charOverrideSpeakerCount = inst.manifest.speakerCount
             charOverrideSid = charOverrideSid.coerceIn(0, (charOverrideSpeakerCount - 1).coerceAtLeast(0))
+            sidGroups = sherpaSpeakerMappings.builtinAssignmentsBySid(inst.manifest.modelId)
         }
         if (ttsProvider == SettingsRepository.TTS_PROVIDER_SHERPA_ONNX) {
             // 打开设置页就后台预热本地模型，提前隐藏首次加载耗时
@@ -292,6 +301,25 @@ fun VoiceSettingsScreen(
             charOverrides = settingsRepository.sherpaCharVoiceOverrides.first()
             modelMessage = "已清除「$normalizedName」的音色配置，恢复自动分配"
             modelMessageIsError = false
+        }
+    }
+
+    /** 试听指定音色编号（用内置分配的代表角色名合成一句话）。 */
+    fun previewSid(sid: Int, sampleName: String) {
+        if (previewingSid != null) return
+        scope.launch {
+            previewingSid = sid
+            modelMessage = ""
+            try {
+                aiVoiceService.playSherpaSidPreview(sid, "你好，我是$sampleName。")
+                modelMessage = "已播放音色 #$sid"
+                modelMessageIsError = false
+            } catch (e: Throwable) {
+                modelMessage = "试听失败：${e.message.orEmpty().take(96)}"
+                modelMessageIsError = true
+            } finally {
+                previewingSid = null
+            }
         }
     }
 
@@ -532,6 +560,57 @@ fun VoiceSettingsScreen(
                             )
                             TextButton(onClick = { removeCharVoiceOverride(name) }) {
                                 Text("清除")
+                            }
+                        }
+                    }
+                }
+            }
+
+            VoiceSettingsCard(
+                title = "内置角色分配",
+                body = "查看当前模型为 FGO 角色预设的音色分配，可逐个试听效果。",
+                iconRes = R.drawable.ic_settings_voice
+            ) {
+                if (sidGroups.isEmpty()) {
+                    Text(
+                        "当前模型没有内置角色分配表（仅 fanchen-C / zh-ll / Kokoro 提供），角色音色由 AI 自动分配。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                } else {
+                    Button(
+                        onClick = { showAssignments = !showAssignments },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            if (showAssignments) {
+                                "收起角色分配列表"
+                            } else {
+                                "展开角色分配列表（${sidGroups.size} 个音色）"
+                            }
+                        )
+                    }
+                    if (showAssignments) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        sidGroups.forEach { group ->
+                            val names = group.names.take(3).joinToString("、")
+                            val suffix = if (group.names.size > 3) " 等${group.names.size}个别名" else ""
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "音色 #${group.sid} · $names$suffix",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(
+                                    onClick = { previewSid(group.sid, group.names.first()) },
+                                    enabled = previewingSid == null
+                                ) {
+                                    Text(if (previewingSid == group.sid) "合成中…" else "试听")
+                                }
                             }
                         }
                     }

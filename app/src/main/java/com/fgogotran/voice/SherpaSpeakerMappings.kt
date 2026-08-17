@@ -4,6 +4,12 @@ import com.fgogotran.data.SettingsRepository
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/** 内置角色分配的一个 sid 分组：该音色下绑定的所有角色别名。 */
+data class SidRoleGroup(
+    val sid: Int,
+    val names: List<String>
+)
+
 /**
  * 方案 A：为 FGO 常见角色预设与「当前安装的 Sherpa 多 speaker 模型」之间的 speaker id 映射。
  *
@@ -105,6 +111,27 @@ class SherpaSpeakerMappings @Inject constructor(
             max = installed.manifest.speakerCount
         )
         return clamp(bucket, installed.manifest.speakerCount)
+    }
+
+    /**
+     * 内置角色分配表（按 sid 分组，合并同音色的角色别名）。
+     * 供 UI 以列表形式展示「哪个角色被分配了哪个音色」。
+     * 仅返回存在预设表的模型；其余模型返回空列表。
+     */
+    fun builtinAssignmentsBySid(modelId: String): List<SidRoleGroup> {
+        val map = when (modelId) {
+            FANCHEN_C_MODEL_ID -> fgoRoleToFanchenC
+            ZH_LL_MODEL_ID -> fgoRoleToZhLl
+            KOKORO_MODEL_ID_V10,
+            KOKORO_MODEL_ID_LEGACY -> fgoRoleToKokoro
+            else -> return emptyList()
+        }
+        return map.entries
+            .groupBy { it.value }
+            .map { (sid, entries) ->
+                SidRoleGroup(sid = sid, names = entries.map { it.key }.sorted())
+            }
+            .sortedBy { it.sid }
     }
 
     // ==================================================================

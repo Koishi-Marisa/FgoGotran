@@ -359,6 +359,42 @@ class AiVoiceService @Inject constructor(
         )
     }
 
+    /**
+     * 试听本地模型的指定音色编号（sid）。
+     * 通过 style="sid:n" 直接锁定 speaker，绕过角色映射，供「角色音色分配」列表试听。
+     */
+    suspend fun playSherpaSidPreview(sid: Int, text: String) {
+        sherpaOnnxTtsProvider.warmUp()
+        val voiceSpeedPercent = settingsRepository.aiVoiceSpeedPercent.first()
+        val voiceVolumePercent = settingsRepository.aiVoiceVolumePercent.first()
+        val profile = VoiceProfile(
+            profileId = "sherpa-sid-preview:$sid",
+            provider = SherpaOnnxTtsProvider.PROVIDER_ID,
+            locale = "zh-CN",
+            voiceName = "preview",
+            style = "sid:$sid",
+            pitch = "0%",
+            rate = "0%",
+            volume = "100%",
+            description = "音色试听"
+        )
+        val request = VoiceSynthesisRequest(
+            speakerName = "音色$sid",
+            spokenText = text,
+            profile = profile,
+            aiVoiceSpeedPercent = voiceSpeedPercent
+        )
+        val audioFile = withContext(Dispatchers.IO) {
+            val tempFile = audioCache.tempFileFor("sherpa-sid-preview-$sid")
+            sherpaOnnxTtsProvider.synthesizeToFile(request, tempFile)
+            tempFile
+        }
+        withContext(Dispatchers.Main) {
+            playbackEngine.play(audioFile, voiceVolumePercent)
+        }
+        FgoLogger.info(tag, "Sherpa sid preview played sid=$sid text=$text")
+    }
+
     private fun reserveVoiceRequest(lineKey: String, cacheMaterial: String, speaker: String): Long? {
         synchronized(voiceRequestLock) {
             if (lineKey == lastRequestedLineKey || cacheMaterial == lastRequestedCacheMaterial) {

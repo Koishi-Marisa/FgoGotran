@@ -30,6 +30,7 @@ import com.fgogotran.update.AppVersionInfo
 import com.fgogotran.util.FgoLogger
 import com.fgogotran.voice.AiVoiceService
 import com.fgogotran.voice.SherpaOnnxModelRegistry
+import com.fgogotran.voice.SherpaSpeakerMappings
 import com.fgogotran.voice.VoiceDataUpdateManager
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
@@ -60,6 +61,7 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var diagnosticEventStore: DiagnosticEventStore
     @Inject lateinit var aiVoiceService: AiVoiceService
     @Inject lateinit var sherpaOnnxModelRegistry: SherpaOnnxModelRegistry
+    @Inject lateinit var sherpaSpeakerMappings: SherpaSpeakerMappings
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -89,7 +91,8 @@ class MainActivity : ComponentActivity() {
                     appAnalytics,
                     diagnosticEventStore,
                     aiVoiceService,
-                    sherpaOnnxModelRegistry
+                    sherpaOnnxModelRegistry,
+                    sherpaSpeakerMappings
                 )
             }
         }
@@ -125,7 +128,8 @@ fun MainScreen(
     appAnalytics: AppAnalytics,
     diagnosticEventStore: DiagnosticEventStore,
     aiVoiceService: AiVoiceService,
-    sherpaOnnxModelRegistry: SherpaOnnxModelRegistry
+    sherpaOnnxModelRegistry: SherpaOnnxModelRegistry,
+    sherpaSpeakerMappings: SherpaSpeakerMappings
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -210,6 +214,7 @@ fun MainScreen(
             translator = translator,
             aiVoiceService = aiVoiceService,
             sherpaOnnxModelRegistry = sherpaOnnxModelRegistry,
+            sherpaSpeakerMappings = sherpaSpeakerMappings,
             onBack = { currentScreen = Screen.SETTINGS }
         )
 
