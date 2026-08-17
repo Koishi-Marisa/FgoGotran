@@ -975,4 +975,9 @@ class SherpaOnnxModelRegistry @Inject constructor(
         }
         registryFile.writeText(json)
     }
+
+    private companion object {
+        /** [listInstalled] 缓存有效期：足够长以覆盖合成热点路径，足够短以自动感知手动改目录。 */
+        const val INSTALLED_CACHE_TTL_MS = 2_000L
+    }
 }
