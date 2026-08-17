@@ -60,8 +60,13 @@ internal class MlKitOcrProvider(
         val startTime = System.currentTimeMillis()
         FgoLogger.debug(tag, "${script.displayName} starting on ${bitmap.width}x${bitmap.height}")
 
-        val image = InputImage.fromBitmap(bitmap, 0)
+        // 预处理（灰度 + 对比度拉伸 + 深底浅字反色）：
+        // ML Kit 对"浅底深字"识别最佳。FGO 日服/部分剧情界面是深色半透明底 + 白字，
+        // 直接识别容易漏字；反色为白底黑字可显著提升准确率。
+        val enhanced = enhanceForOcr(bitmap)
+        val image = InputImage.fromBitmap(enhanced, 0)
         val result = recognizer.processSuspending(image)
+        if (enhanced !== bitmap) enhanced.recycle()
         val lines = mutableListOf<OcrTextLine>()
 
         for (block in result.getTextBlocks()) {
@@ -96,6 +101,56 @@ internal class MlKitOcrProvider(
     override fun close() {
         recognizer.close()
         warmedUp = false
+    }
+
+    /**
+     * 轻量 OCR 预处理：灰度化 → 直方图对比度拉伸 → 深底浅字整体反色。
+     * 保持与输入完全相同的尺寸与坐标，调用方的 boundingBox 换算不受影响。
+     * 已二值化（白底黑字）的输入（红色台词 / 选择按钮路径）经拉伸后保持不变。
+     */
+    private fun enhanceForOcr(bitmap: Bitmap): Bitmap {
+        val width = bitmap.width
+        val height = bitmap.height
+        if (width <= 0 || height <= 0) return bitmap
+
+        val pixels = IntArray(width * height)
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+
+        var min = 255
+        var max = 0
+        var sum = 0L
+        for (i in pixels.indices) {
+            val c = pixels[i]
+            val gray = (
+                ((c shr 16) and 0xFF) * 299 +
+                    ((c shr 8) and 0xFF) * 587 +
+                    (c and 0xFF) * 114
+                ) / 1000
+            if (gray < min) min = gray
+            if (gray > max) max = gray
+            sum += gray
+        }
+        val avg = sum / pixels.size
+        val range = (max - min).coerceAtLeast(1)
+        // 深底浅字（平均亮度低）时反色为白底黑字，贴近 ML Kit 最优输入
+        val invert = avg < 128
+
+        val out = IntArray(pixels.size)
+        for (i in pixels.indices) {
+            val c = pixels[i]
+            val gray = (
+                ((c shr 16) and 0xFF) * 299 +
+                    ((c shr 8) and 0xFF) * 587 +
+                    (c and 0xFF) * 114
+                ) / 1000
+            var v = (gray - min) * 255 / range
+            if (invert) v = 255 - v
+            out[i] = (0xFF shl 24) or (v shl 16) or (v shl 8) or v
+        }
+
+        val enhanced = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        enhanced.setPixels(out, 0, width, 0, 0, width, height)
+        return enhanced
     }
 
     private suspend fun TextRecognizer.processSuspending(

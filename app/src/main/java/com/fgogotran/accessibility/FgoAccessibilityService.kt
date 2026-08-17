@@ -2394,7 +2394,9 @@ class FgoAccessibilityService : AccessibilityService() {
         label: String,
         ocrEngine: OcrEngineId
     ): String {
-        if (ocrEngine != OcrEngineId.ML_KIT) return sourceText
+        if (ocrEngine != OcrEngineId.ML_KIT && ocrEngine != OcrEngineId.ML_KIT_CHINESE) {
+            return sourceText
+        }
 
         val corrected = OcrTextCorrector.correct(sourceText)
         if (corrected != sourceText) {

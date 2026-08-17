@@ -43,6 +43,21 @@ object OcrTextCorrector {
         "魔術協会",
         "魔神柱",
         "投影魔術",
+        // 国服中文常用词（与 confusableGlyphs 的中文形近字配合生成变体）
+        "玛修",
+        "灵基",
+        "御主",
+        "迦勒底",
+        "魔术师",
+        "魔术回路",
+        "令咒",
+        "从者",
+        "特异点",
+        "人理",
+        "英灵",
+        "影从者",
+        "圣杯",
+        "魔力"
     )
 
     private val confusableGlyphs = mapOf(
@@ -55,7 +70,24 @@ object OcrTextCorrector {
         '徨' to setOf('律', '僧', '管'),
         '頷' to setOf('領'),
         '魔' to setOf('廃', '废'),
-        '術' to setOf('术')
+        '術' to setOf('术'),
+        // 国服中文形近字（OCR 高频混淆）
+        '玛' to setOf('码', '妈'),
+        '修' to setOf('休'),
+        '灵' to setOf('录'),
+        '基' to setOf('其'),
+        '御' to setOf('卸'),
+        '主' to setOf('王'),
+        '迦' to setOf('加', '珈'),
+        '勒' to setOf('肋'),
+        '底' to setOf('低', '抵'),
+        '令' to setOf('今'),
+        '咒' to setOf('咎'),
+        '从' to setOf('丛'),
+        '特' to setOf('持'),
+        '异' to setOf('导'),
+        '人' to setOf('入'),
+        '理' to setOf('里')
     )
 
     private val rules: List<CorrectionRule> = likelyDialogueWords
