@@ -14,9 +14,15 @@ import com.fgogotran.terminology.LocalGlossaryDao
 import com.fgogotran.terminology.LocalGlossaryDatabase
 import com.fgogotran.util.FgoLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -92,6 +98,7 @@ class SettingsRepository @Inject constructor(
         val KEY_SHERPA_SELECTED_MODEL = stringPreferencesKey("sherpa_selected_model")
         val KEY_SHERPA_SELECTED_SPEAKER = intPreferencesKey("sherpa_selected_speaker")
         val KEY_SHERPA_DOWNLOAD_PROXY = stringPreferencesKey("sherpa_download_proxy")
+        val KEY_SHERPA_CHAR_VOICE_OVERRIDES = stringPreferencesKey("sherpa_char_voice_overrides")
 
         // ---- TTS Provider IDs ----
         const val TTS_PROVIDER_AZURE = "azure"
@@ -490,6 +497,50 @@ class SettingsRepository @Inject constructor(
     }
 
     suspend fun getSherpaDownloadProxy(): String = sherpaDownloadProxy.first()
+
+    // ------------------------------------------------------------------
+    // 角色音色手动覆盖（角色名 → speaker id，仅针对当前所选模型）
+    // 存储格式："角色名=sid;角色名=sid"，角色名已由 VoiceNameNormalizer 归一化
+    // ------------------------------------------------------------------
+    val sherpaCharVoiceOverrides: Flow<Map<String, Int>> = context.dataStore.data.map { prefs ->
+        parseCharVoiceOverrides(prefs[KEY_SHERPA_CHAR_VOICE_OVERRIDES].orEmpty())
+    }
+
+    /** 内存缓存：供推理线程同步读取（SherpaSpeakerMappings 查询手动覆盖）。 */
+    @Volatile
+    private var charVoiceOverridesCache: Map<String, Int> = emptyMap()
+
+    init {
+        // 常驻收集，写设置后缓存自动更新
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            sherpaCharVoiceOverrides.distinctUntilChanged().collect { charVoiceOverridesCache = it }
+        }
+    }
+
+    /** 同步读取角色音色覆盖表（非挂起，供非 suspend 代码使用）。 */
+    fun getCharVoiceOverridesSync(): Map<String, Int> = charVoiceOverridesCache
+
+    /** 设置/清除某角色的音色覆盖；sid 为 null 表示删除覆盖恢复自动分配。 */
+    suspend fun setSherpaCharVoiceOverride(normalizedName: String, sid: Int?) {
+        context.dataStore.edit { prefs ->
+            val current = parseCharVoiceOverrides(prefs[KEY_SHERPA_CHAR_VOICE_OVERRIDES].orEmpty())
+            val next = if (sid == null) current - normalizedName else current + (normalizedName to sid)
+            prefs[KEY_SHERPA_CHAR_VOICE_OVERRIDES] =
+                next.entries.joinToString(";") { (k, v) -> "$k=$v" }
+        }
+        FgoLogger.debug(tag, "Setting updated: sherpa_char_voice_overrides")
+    }
+
+    private fun parseCharVoiceOverrides(raw: String): Map<String, Int> = buildMap {
+        raw.split(';').forEach { pair ->
+            val idx = pair.indexOf('=')
+            if (idx > 0) {
+                val k = pair.substring(0, idx)
+                val v = pair.substring(idx + 1).toIntOrNull()
+                if (k.isNotBlank() && v != null) put(k, v)
+            }
+        }
+    }
 
     /** Master voice used when reading choice text. */
     val aiVoiceMasterVoice: Flow<String> = context.dataStore.data.map { prefs ->

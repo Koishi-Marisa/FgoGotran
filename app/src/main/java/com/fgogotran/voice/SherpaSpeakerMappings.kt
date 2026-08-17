@@ -1,5 +1,6 @@
 package com.fgogotran.voice
 
+import com.fgogotran.data.SettingsRepository
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -7,15 +8,18 @@ import javax.inject.Singleton
  * 方案 A：为 FGO 常见角色预设与「当前安装的 Sherpa 多 speaker 模型」之间的 speaker id 映射。
  *
  * ### 三层优先级（越靠前优先级越高）
- * 1. **显式覆盖（TSV / TempVoice API 里写死）**：`VoiceProfile.style` 若满足 `sid:17` 格式，直接用；
- * 2. **角色内置映射表（本组件）**：按「模型 id × 角色名」精确匹配，例如 Saber 在 fanchen-C 用 sid=22；
- * 3. **性别感知 speaker 选择**：根据 AI 返回的 voice_type（profile.description）判断角色性别，
+ * 1. **用户手动配置的角色音色**（语音设置页固定角色 → speaker id）；
+ * 2. **显式覆盖（TSV / TempVoice API 里写死）**：`VoiceProfile.style` 若满足 `sid:17` 格式，直接用；
+ * 3. **角色内置映射表（本组件）**：按「模型 id × 角色名」精确匹配，例如 Saber 在 fanchen-C 用 sid=22；
+ * 4. **性别感知 speaker 选择**：根据 AI 返回的 voice_type（profile.description）判断角色性别，
  *    在模型的「已知性别 speaker 集合」里稳定 hash。男性角色只会落到男声集合，女性角色只会落到女声集合。
- * 4. **稳定 hash fallback**：模型性别分布未知时，按「角色名 + 性别」先分区再 hash，
+ * 5. **稳定 hash fallback**：模型性别分布未知时，按「角色名 + 性别」先分区再 hash，
  *    保证同一个角色在同一模型下永远落到相同 speaker id，避免每句话音色跳变。
  */
 @Singleton
-class SherpaSpeakerMappings @Inject constructor() {
+class SherpaSpeakerMappings @Inject constructor(
+    private val settingsRepository: SettingsRepository
+) {
 
     /** 对外入口：返回在 [installed] 模型范围内可用的 speaker id（0..speakerCount-1）。 */
     fun resolveSpeakerId(
@@ -23,18 +27,28 @@ class SherpaSpeakerMappings @Inject constructor() {
         profile: VoiceProfile,
         installed: InstalledSherpaModel
     ): Int {
+        val count = installed.manifest.speakerCount
+        val normalizedSpeaker = (speakerName ?: profile.profileId)
+            .let(VoiceNameNormalizer::normalize)
+            .takeIf { it.isNotBlank() }
+
+        // 优先级 0：用户手动配置的角色音色（语音设置页固定），最高优先级
+        if (normalizedSpeaker != null) {
+            settingsRepository.getCharVoiceOverridesSync()[normalizedSpeaker]?.let {
+                return clamp(it, count)
+            }
+        }
+
         // 优先级 1：显式 "sid:xxx" 覆盖（TSV 列或用户自定义）
         val explicit = explicitSidFrom(profile.style)
             ?: explicitSidFrom(profile.description)
             ?: profile.profileId.takeIf { it.startsWith("sid:") }?.substring(4)?.toIntOrNull()
         if (explicit != null) {
-            return clamp(explicit, installed.manifest.speakerCount)
+            return clamp(explicit, count)
         }
 
-        val normalizedSpeaker = (speakerName ?: profile.profileId)
-            .let(VoiceNameNormalizer::normalize)
-            .takeIf { it.isNotBlank() } ?: run {
-            return clamp(installed.defaultSpeakerId, installed.manifest.speakerCount)
+        if (normalizedSpeaker == null) {
+            return clamp(installed.defaultSpeakerId, count)
         }
 
         // 优先级 2：针对模型类型的角色预设表
@@ -58,7 +72,7 @@ class SherpaSpeakerMappings @Inject constructor() {
             else -> null
         }
         if (byModel != null) {
-            return clamp(byModel, installed.manifest.speakerCount)
+            return clamp(byModel, count)
         }
 
         // 优先级 3：性别感知 speaker 选择。

@@ -662,6 +662,17 @@ class SherpaOnnxModelRegistry @Inject constructor(
 
             val channel = response.bodyAsChannel()
             val startedAt = System.currentTimeMillis()
+            // 进度节流：64KB 一报太频繁，percent 变化 >=1 且间隔 >=150ms 才回调，
+            // 保证 UI 流畅又不丢关键节点
+            var lastPercent = -1
+            var lastProgressAt = 0L
+            fun reportProgress(p: Int, msg: String) {
+                val now = System.currentTimeMillis()
+                if (p == lastPercent && now - lastProgressAt < 150L) return
+                lastPercent = p
+                lastProgressAt = now
+                onProgress(p, msg)
+            }
             java.io.RandomAccessFile(tempFile, "rw").use { raf ->
                 raf.seek(resumeFrom)
                 val buffer = ByteArray(64 * 1024)
@@ -676,9 +687,11 @@ class SherpaOnnxModelRegistry @Inject constructor(
                     val elapsedSec = ((System.currentTimeMillis() - startedAt) / 1000).coerceAtLeast(1)
                     val speed = (written - resumeFrom) / elapsedSec.toFloat()
                     val percent = ((written * 100) / expectedBytes).toInt().coerceIn(0, 94)
-                    onProgress(percent, "下载中 ${formatMb(written)} · ${formatMb(speed.toLong())}/s")
+                    reportProgress(percent, "下载中 ${formatMb(written)} · ${formatMb(speed.toLong())}/s")
                 }
             }
+            // 下载完成时强制上报 94%，避免最后一截因节流被吞掉
+            reportProgress(94, "下载完成，解压中…")
 
             val downloaded = tempFile.length()
             if (totalSize != null && downloaded < totalSize) {

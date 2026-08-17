@@ -59,6 +59,7 @@ import com.fgogotran.voice.AiVoiceService
 import com.fgogotran.voice.SherpaOnnxModelManifest
 import com.fgogotran.voice.SherpaOnnxModelRegistry
 import com.fgogotran.voice.TtsTestResult
+import com.fgogotran.voice.VoiceNameNormalizer
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.first
@@ -118,6 +119,12 @@ fun VoiceSettingsScreen(
     var modelMessage by remember { mutableStateOf("") }
     var modelMessageIsError by remember { mutableStateOf(false) }
 
+    // 角色音色手动配置
+    var charOverrideName by remember { mutableStateOf("") }
+    var charOverrideSid by remember { mutableStateOf(0) }
+    var charOverrides by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
+    var charOverrideSpeakerCount by remember { mutableStateOf(1) }
+
     // 加速线路（测速 / 切换）
     var selectedProxyPrefix by remember { mutableStateOf("") }
     var proxySpeeds by remember { mutableStateOf<Map<String, SherpaOnnxModelRegistry.ProxySpeedResult>>(emptyMap()) }
@@ -145,6 +152,12 @@ fun VoiceSettingsScreen(
         installedSherpaModelIds = sherpaOnnxModelRegistry.listInstalled()
             .map { it.manifest.modelId }
             .toSet()
+        // 角色音色覆盖表 + 当前模型的音色数量
+        charOverrides = settingsRepository.sherpaCharVoiceOverrides.first()
+        sherpaOnnxModelRegistry.selectedInstalled()?.let {
+            charOverrideSpeakerCount = it.manifest.speakerCount
+            charOverrideSid = charOverrideSid.coerceIn(0, (charOverrideSpeakerCount - 1).coerceAtLeast(0))
+        }
         if (ttsProvider == SettingsRepository.TTS_PROVIDER_SHERPA_ONNX) {
             // 打开设置页就后台预热本地模型，提前隐藏首次加载耗时
             scope.launch { runCatching { aiVoiceService.warmUpCurrentProvider() } }
@@ -167,8 +180,11 @@ fun VoiceSettingsScreen(
         sherpaOnnxModelRegistry.downloadAndInstallAsync(
             manifest = manifest,
             onProgress = { percent, message ->
-                downloadProgress = percent
-                modelMessage = message
+                // 进度回调来自 IO 线程，切回主线程更新 Compose state 确保重组
+                scope.launch {
+                    downloadProgress = percent
+                    modelMessage = message
+                }
             },
             onSuccess = {
                 selectedSherpaModelId = manifest.modelId
@@ -248,6 +264,34 @@ fun VoiceSettingsScreen(
                     modelMessageIsError = true
                     modelMessage = "卸载失败：${e.message.orEmpty().take(96)}"
                 }
+        }
+    }
+
+    /** 保存角色音色覆盖（针对当前所选模型）。 */
+    fun saveCharVoiceOverride() {
+        val raw = charOverrideName.trim()
+        if (raw.isBlank()) {
+            modelMessage = "请输入角色名"
+            modelMessageIsError = true
+            return
+        }
+        val normalized = VoiceNameNormalizer.normalize(raw)
+        scope.launch {
+            settingsRepository.setSherpaCharVoiceOverride(normalized, charOverrideSid)
+            charOverrides = settingsRepository.sherpaCharVoiceOverrides.first()
+            modelMessage = "已为「$normalized」固定音色 #$charOverrideSid"
+            modelMessageIsError = false
+            charOverrideName = ""
+        }
+    }
+
+    /** 清除角色音色覆盖，恢复自动分配。 */
+    fun removeCharVoiceOverride(normalizedName: String) {
+        scope.launch {
+            settingsRepository.setSherpaCharVoiceOverride(normalizedName, null)
+            charOverrides = settingsRepository.sherpaCharVoiceOverrides.first()
+            modelMessage = "已清除「$normalizedName」的音色配置，恢复自动分配"
+            modelMessageIsError = false
         }
     }
 
@@ -434,6 +478,63 @@ fun VoiceSettingsScreen(
                         onSelect = { selectSherpaModel(manifest.modelId) },
                         onUninstall = { uninstallSherpaModel(manifest.modelId) }
                     )
+                }
+            }
+
+            VoiceSettingsCard(
+                title = "角色音色配置",
+                body = "为指定角色手动固定音色编号（针对当前所选模型）；不配置时由 AI 自动分配。",
+                iconRes = R.drawable.ic_settings_voice
+            ) {
+                OutlinedTextField(
+                    value = charOverrideName,
+                    onValueChange = { charOverrideName = it },
+                    label = { Text("角色名（如：玛修）") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "音色 #$charOverrideSid / $charOverrideSpeakerCount",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                )
+                Slider(
+                    value = charOverrideSid.toFloat(),
+                    onValueChange = { charOverrideSid = it.roundToInt() },
+                    valueRange = 0f..(charOverrideSpeakerCount - 1).coerceAtLeast(0).toFloat(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Button(
+                    onClick = ::saveCharVoiceOverride,
+                    enabled = charOverrideName.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("固定此角色音色")
+                }
+                if (charOverrides.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        "已配置角色：",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+                    charOverrides.forEach { (name, sid) ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "$name → 音色 #$sid",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(onClick = { removeCharVoiceOverride(name) }) {
+                                Text("清除")
+                            }
+                        }
+                    }
                 }
             }
 
