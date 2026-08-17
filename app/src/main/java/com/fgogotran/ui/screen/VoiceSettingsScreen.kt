@@ -77,6 +77,7 @@ fun VoiceSettingsScreen(
     aiVoiceService: AiVoiceService,
     sherpaOnnxModelRegistry: SherpaOnnxModelRegistry,
     sherpaSpeakerMappings: SherpaSpeakerMappings,
+    onViewAssignments: () -> Unit,
     onBack: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -579,14 +580,21 @@ fun VoiceSettingsScreen(
                     )
                 } else {
                     Button(
+                        onClick = onViewAssignments,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("查看全部角色（${sidGroups.size} 个音色）")
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedButton(
                         onClick = { showAssignments = !showAssignments },
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
                             if (showAssignments) {
-                                "收起角色分配列表"
+                                "收起就地预览列表"
                             } else {
-                                "展开角色分配列表（${sidGroups.size} 个音色）"
+                                "展开就地预览列表"
                             }
                         )
                     }

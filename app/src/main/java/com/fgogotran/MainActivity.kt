@@ -23,6 +23,7 @@ import com.fgogotran.ui.screen.DiagnosticLogScreen
 import com.fgogotran.ui.screen.GuideScreen
 import com.fgogotran.ui.screen.HomeScreen
 import com.fgogotran.ui.screen.SettingsScreen
+import com.fgogotran.ui.screen.SidAssignmentsScreen
 import com.fgogotran.ui.screen.VoiceSettingsScreen
 import com.fgogotran.ui.theme.FgoGotranTheme
 import com.fgogotran.update.AppVersionCheckResult
@@ -115,7 +116,7 @@ class MainActivity : ComponentActivity() {
 /**
  * Top-level navigation state and routing.
  */
-enum class Screen { HOME, GUIDE, SETTINGS, API_SETTINGS, VOICE_SETTINGS, DIAGNOSTIC_LOG, DEBUG_LOG }
+enum class Screen { HOME, GUIDE, SETTINGS, API_SETTINGS, VOICE_SETTINGS, SID_ASSIGNMENTS, DIAGNOSTIC_LOG, DEBUG_LOG }
 
 /**
  * Root composable managing top-level navigation.
@@ -173,6 +174,7 @@ fun MainScreen(
         currentScreen = when (currentScreen) {
             Screen.API_SETTINGS,
             Screen.VOICE_SETTINGS,
+            Screen.SID_ASSIGNMENTS,
             Screen.DIAGNOSTIC_LOG,
             Screen.DEBUG_LOG -> Screen.SETTINGS
             else -> Screen.HOME
@@ -215,7 +217,16 @@ fun MainScreen(
             aiVoiceService = aiVoiceService,
             sherpaOnnxModelRegistry = sherpaOnnxModelRegistry,
             sherpaSpeakerMappings = sherpaSpeakerMappings,
+            onViewAssignments = { currentScreen = Screen.SID_ASSIGNMENTS },
             onBack = { currentScreen = Screen.SETTINGS }
+        )
+
+        Screen.SID_ASSIGNMENTS -> SidAssignmentsScreen(
+            settingsRepository = settingsRepository,
+            sherpaOnnxModelRegistry = sherpaOnnxModelRegistry,
+            sherpaSpeakerMappings = sherpaSpeakerMappings,
+            aiVoiceService = aiVoiceService,
+            onBack = { currentScreen = Screen.VOICE_SETTINGS }
         )
 
         Screen.DIAGNOSTIC_LOG -> DiagnosticLogScreen(
