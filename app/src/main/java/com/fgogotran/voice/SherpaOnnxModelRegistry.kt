@@ -62,6 +62,12 @@ class SherpaOnnxModelRegistry @Inject constructor(
     private val modelsDir: File by lazy { File(rootDir, "models").also { it.mkdirs() } }
     private val registryFile: File by lazy { File(rootDir, "installed.json") }
 
+    /** [listInstalled] 短 TTL 缓存：避免每句台词合成都重新扫描模型目录。 */
+    @Volatile
+    private var installedCache: List<InstalledSherpaModel>? = null
+    @Volatile
+    private var installedCacheAt = 0L
+
     /** 下载/安装协程作用域：应用级，不随 UI/页面销毁而取消。 */
     private val downloadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -282,6 +288,7 @@ class SherpaOnnxModelRegistry @Inject constructor(
                 copyAssetTree(srcDir = "$root/$modelId", targetDir = target)
                 sentinel.writeText("ok")
                 persistInstalled(manifest)
+                invalidateInstalledCache()
                 FgoLogger.info(tag, "内置模型安装完成: $modelId (${target.listFiles()?.size ?: 0} entries)")
             } catch (t: Throwable) {
                 runCatching { target.deleteRecursively() }
@@ -439,12 +446,14 @@ class SherpaOnnxModelRegistry @Inject constructor(
 
         onProgress?.invoke(100, "安装完成")
         FgoLogger.info(tag, "模型安装成功: ${manifest.modelId}")
+        invalidateInstalledCache()
         InstalledSherpaModel(manifest, dir.absolutePath)
     }
 
     fun uninstall(modelId: String) {
         installDirFor(modelId).takeIf { it.isDirectory }?.deleteRecursively()
         persistInstalled(null, removeId = modelId)
+        invalidateInstalledCache()
         FgoLogger.info(tag, "卸载模型: $modelId")
     }
 
@@ -735,6 +744,19 @@ class SherpaOnnxModelRegistry @Inject constructor(
 
     /** 已安装模型列表（从注册表目录扫描） */
     fun listInstalled(): List<InstalledSherpaModel> {
+        // 短 TTL 缓存：合成热点路径（每句台词）无需重复扫描模型目录；
+        // 安装 / 卸载 / assets 首次安装完成后会主动失效。
+        val cached = installedCache
+        if (cached != null && System.currentTimeMillis() - installedCacheAt < INSTALLED_CACHE_TTL_MS) {
+            return cached
+        }
+        val fresh = buildInstalledList()
+        installedCache = fresh
+        installedCacheAt = System.currentTimeMillis()
+        return fresh
+    }
+
+    private fun buildInstalledList(): List<InstalledSherpaModel> {
         val catalog = builtinCatalog().associateBy { it.modelId }
         return modelsDir.listFiles()?.filter { it.isDirectory }.orEmpty().mapNotNull { dir ->
             // 懒迁移：旧版本安装的模型目录里是原始文件名（如 vits-zh-hf-fanchen-C.onnx），
@@ -762,6 +784,12 @@ class SherpaOnnxModelRegistry @Inject constructor(
                 )
             InstalledSherpaModel(manifest, dir.absolutePath)
         }
+    }
+
+    /** 安装 / 卸载后主动丢弃 [listInstalled] 缓存，避免 UI 与合成读到过期状态。 */
+    private fun invalidateInstalledCache() {
+        installedCache = null
+        installedCacheAt = 0L
     }
 
     /**
